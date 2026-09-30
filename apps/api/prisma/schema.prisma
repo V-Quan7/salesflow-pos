@@ -1,0 +1,364 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum StoreSettingValueType {
+  STRING
+  NUMBER
+  BOOLEAN
+  JSON
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum CategoryStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum ProductStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum CustomerStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  BANK_TRANSFER
+  E_WALLET
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  REFUNDED
+}
+
+enum OrderStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+enum InventoryTransactionType {
+  IN
+  SALE
+  ADJUSTMENT
+  RETURN
+}
+
+enum OrderAuditAction {
+  CANCEL
+  REFUND
+}
+
+enum InventoryTransactionReferenceType {
+  ORDER
+  ADJUSTMENT
+  MANUAL
+}
+
+model Store {
+  id                    String                 @id @default(uuid()) @db.Uuid
+  name                  String
+  code                  String                 @unique
+  logoUrl               String?
+  faviconUrl            String?
+  slogan                String?
+  description           String?
+  phone                 String?
+  email                 String?
+  address               String?
+  website               String?
+  currency              String
+  timezone              String
+  locale                String
+  primaryColor          String?
+  secondaryColor        String?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  settings              StoreSetting[]
+  contentBlocks         ContentBlock[]
+  users                 User[]
+  roles                 Role[]
+  categories            Category[]
+  products              Product[]
+  customers             Customer[]
+  orders                Order[]
+  orderAuditEvents      OrderAuditEvent[]
+  inventoryTransactions InventoryTransaction[]
+
+  @@index([name])
+}
+
+model StoreSetting {
+  id          String                @id @default(uuid()) @db.Uuid
+  storeId     String                @db.Uuid
+  key         String
+  value       String
+  valueType   StoreSettingValueType
+  description String?
+  updatedAt   DateTime              @updatedAt
+  store       Store                 @relation(fields: [storeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([storeId, key])
+  @@index([storeId])
+}
+
+model ContentBlock {
+  id        String   @id @default(uuid()) @db.Uuid
+  storeId   String   @db.Uuid
+  key       String
+  title     String
+  content   String
+  type      String
+  isActive  Boolean  @default(true)
+  updatedAt DateTime @updatedAt
+  store     Store    @relation(fields: [storeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([storeId, key])
+  @@index([storeId])
+  @@index([isActive])
+}
+
+model User {
+  id                    String                 @id @default(uuid()) @db.Uuid
+  storeId               String                 @db.Uuid
+  name                  String
+  email                 String
+  passwordHash          String
+  roleId                String                 @db.Uuid
+  status                UserStatus
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  store                 Store                  @relation(fields: [storeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  role                  Role                   @relation(fields: [roleId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  orders                Order[]
+  inventoryTransactions InventoryTransaction[]
+  authSessions          AuthSession[]
+  orderAuditEvents      OrderAuditEvent[]
+  refundedOrders        Order[]                @relation("OrderRefundActor")
+
+  @@unique([storeId, email])
+  @@index([storeId])
+  @@index([roleId])
+  @@index([name])
+  @@index([email])
+}
+
+model Role {
+  id          String           @id @default(uuid()) @db.Uuid
+  storeId     String?          @db.Uuid
+  name        String
+  store       Store?           @relation(fields: [storeId], references: [id], onUpdate: Cascade)
+  users       User[]
+  permissions RolePermission[]
+
+  @@index([storeId])
+}
+
+model Permission {
+  id          String           @id @default(uuid()) @db.Uuid
+  code        String           @unique
+  description String?
+  roles       RolePermission[]
+
+  @@index([code])
+}
+
+model RolePermission {
+  roleId       String     @db.Uuid
+  permissionId String     @db.Uuid
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+}
+
+model AuthSession {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  createdAt DateTime  @default(now())
+  expiresAt DateTime
+  revokedAt DateTime?
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Category {
+  id          String         @id @default(uuid()) @db.Uuid
+  storeId     String         @db.Uuid
+  name        String
+  slug        String
+  description String?
+  status      CategoryStatus
+  store       Store          @relation(fields: [storeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  products    Product[]
+
+  @@unique([storeId, slug])
+  @@index([storeId])
+  @@index([name])
+  @@index([slug])
+}
+
+model Product {
+  id                    String                 @id @default(uuid()) @db.Uuid
+  storeId               String                 @db.Uuid
+  categoryId            String                 @db.Uuid
+  sku                   String
+  name                  String
+  description           String?
+  imageUrl              String?
+  costPrice             Decimal                @db.Decimal(65, 30)
+  sellingPrice          Decimal                @db.Decimal(65, 30)
+  unit                  String
+  stockQuantity         Int
+  minStock              Int
+  status                ProductStatus
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  store                 Store                  @relation(fields: [storeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  category              Category               @relation(fields: [categoryId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  orderItems            OrderItem[]
+  inventoryTransactions InventoryTransaction[]
+
+  @@unique([storeId, sku])
+  @@index([storeId])
+  @@index([categoryId])
+  @@index([name])
+  @@index([sku])
+  @@index([status])
+}
+
+model Customer {
+  id        String   @id @default(uuid()) @db.Uuid
+  storeId   String   @db.Uuid
+  name      String
+  phone     String?
+  email     String?
+  address   String?
+  note      String?
+  status    CustomerStatus @default(ACTIVE)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  store     Store    @relation(fields: [storeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  orders    Order[]
+
+  @@index([storeId])
+  @@index([name])
+  @@index([phone])
+  @@index([email])
+}
+
+model Order {
+  id            String        @id @default(uuid()) @db.Uuid
+  storeId       String        @db.Uuid
+  orderCode     String
+  customerId    String?       @db.Uuid
+  staffId       String        @db.Uuid
+  subtotal      Decimal       @db.Decimal(65, 30)
+  discount      Decimal       @db.Decimal(65, 30)
+  total         Decimal       @db.Decimal(65, 30)
+  paymentMethod PaymentMethod
+  paymentStatus PaymentStatus
+  orderStatus   OrderStatus
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  refundedAt    DateTime?
+  refundedBy    String?       @db.Uuid
+  refundReason  String?
+  store         Store         @relation(fields: [storeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  customer      Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  staff         User          @relation(fields: [staffId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  items         OrderItem[]
+  auditEvents   OrderAuditEvent[]
+  refundActor   User?         @relation("OrderRefundActor", fields: [refundedBy], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([storeId, orderCode])
+  @@index([storeId])
+  @@index([customerId])
+  @@index([staffId])
+  @@index([orderStatus])
+  @@index([paymentStatus])
+  @@index([createdAt])
+  @@index([storeId, createdAt])
+  @@index([storeId, orderStatus, createdAt])
+  @@index([storeId, paymentStatus, createdAt])
+  @@index([storeId, refundedAt])
+}
+
+model OrderItem {
+  id                  String  @id @default(uuid()) @db.Uuid
+  orderId             String  @db.Uuid
+  productId           String  @db.Uuid
+  productNameSnapshot String
+  skuSnapshot         String
+  quantity            Int
+  unitPrice           Decimal @db.Decimal(65, 30)
+  discount            Decimal @db.Decimal(65, 30)
+  total               Decimal @db.Decimal(65, 30)
+  order               Order   @relation(fields: [orderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  product             Product @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+model OrderAuditEvent {
+  id        String           @id @default(uuid()) @db.Uuid
+  storeId   String           @db.Uuid
+  orderId   String           @db.Uuid
+  actorId   String           @db.Uuid
+  action    OrderAuditAction
+  reason    String
+  createdAt DateTime         @default(now())
+  store     Store            @relation(fields: [storeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  order     Order            @relation(fields: [orderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  actor     User             @relation(fields: [actorId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([storeId, createdAt])
+  @@index([orderId, createdAt])
+  @@index([actorId])
+  @@unique([orderId, action])
+}
+
+model InventoryTransaction {
+  id             String                            @id @default(uuid()) @db.Uuid
+  storeId        String                            @db.Uuid
+  productId      String                            @db.Uuid
+  type           InventoryTransactionType
+  quantity       Int
+  beforeQuantity Int
+  afterQuantity  Int
+  referenceType  InventoryTransactionReferenceType
+  referenceId    String                            @db.Uuid
+  note           String?
+  createdBy      String                            @db.Uuid
+  createdAt      DateTime                          @default(now())
+  store          Store                             @relation(fields: [storeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  product        Product                           @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  creator        User                              @relation(fields: [createdBy], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([storeId])
+  @@index([productId])
+  @@index([referenceType, referenceId])
+  @@index([createdBy])
+  @@index([createdAt])
+}

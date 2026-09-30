@@ -1,0 +1,35 @@
+{
+  "name": "salesflow",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:api": "npm run start:dev --workspace=@salesflow/api",
+    "build:api": "npm run build --workspace=@salesflow/api",
+    "start:api": "npm run start --workspace=@salesflow/api",
+    "dev:web": "npm run dev --workspace=@salesflow/web",
+    "build:web": "npm run build --workspace=@salesflow/web",
+    "test:api": "npm test --workspace=@salesflow/api",
+    "test:postgres": "npm run test:postgres --workspace=@salesflow/api",
+    "test:web": "npm test --workspace=@salesflow/web",
+    "prisma:validate": "npm exec --workspace=@salesflow/api -- prisma validate",
+    "prisma:generate": "npm exec --workspace=@salesflow/api -- prisma generate",
+    "prisma:migrate:dev": "npm exec --workspace=@salesflow/api -- prisma migrate dev",
+    "prisma:seed": "npm exec --workspace=@salesflow/api -- prisma db seed",
+    "seed:owner": "npm run seed:owner --workspace=@salesflow/api",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": ">=10.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "concurrently": "^9.1.2",
+    "typescript-eslint": "^8.18.0"
+  }
+}

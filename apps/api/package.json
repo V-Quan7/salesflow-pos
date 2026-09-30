@@ -1,0 +1,43 @@
+{
+  "name": "@salesflow/api",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "start": "node dist/main.js",
+    "start:dev": "nest start --watch",
+    "build": "nest build",
+    "test": "npm run build && node --test test/*.test.cjs",
+    "test:postgres": "npm run build && node test/phase67-postgres-smoke.mjs",
+    "seed:owner": "npm run build && node prisma/seed-owner.mjs",
+    "permissions:sync-store-config": "node prisma/sync-store-config-permissions.mjs",
+    "permissions:sync-catalog": "node prisma/sync-catalog-permissions.mjs",
+    "permissions:sync-inventory": "node prisma/sync-inventory-permissions.mjs",
+    "permissions:sync-customer-pos": "node prisma/sync-customer-pos-permissions.mjs",
+    "permissions:sync-orders-reports": "node prisma/sync-orders-reports-permissions.mjs",
+    "lint": "eslint \"src/**/*.ts\" \"prisma/**/*.mjs\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@nestjs/jwt": "^11.0.0",
+    "@prisma/client": "^6.2.1",
+    "argon2": "^0.41.1",
+    "cookie-parser": "^1.4.7",
+    "@nestjs/common": "^11.0.1",
+    "@nestjs/core": "^11.0.1",
+    "@nestjs/platform-express": "^11.0.1",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.1",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^11.0.5",
+    "@nestjs/schematics": "^11.0.0",
+    "@nestjs/testing": "^11.0.1",
+    "@types/node": "^22.10.5",
+    "@types/cookie-parser": "^1.4.8",
+    "eslint": "^9.17.0",
+    "prisma": "^6.2.1",
+    "typescript": "^5.7.2"
+  }
+}

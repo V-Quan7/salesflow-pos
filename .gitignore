@@ -1,0 +1,20 @@
+node_modules/
+dist/
+.next/
+coverage/
+
+.env
+.env.local
+.env.production
+.env.development
+
+docs/
+
+*.log
+*.tsbuildinfo
+
+# Project documentation - do not upload
+PHASES_COMPLETION_REPORT.md
+PROJECT_MEMORY.md
+PROJECT_STRUCTURE_REPORT.md
+README.md
