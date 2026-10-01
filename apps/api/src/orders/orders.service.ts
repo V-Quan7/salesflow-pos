@@ -8,6 +8,7 @@ import { ListOrdersDto } from './dto/list-orders.dto';
 import { OrderReasonDto } from './dto/order-reason.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { storeDateRange } from '../common/store-date';
+import { calculateDiscountAmount, type OrderDiscountType } from './order-money';
 
 const maxAttempts = 8;
 const maxStock = 2_147_483_647;
@@ -51,11 +52,13 @@ export class OrdersService {
 
   async get(actor: AuthenticatedUser, id: string) {
     const order = await this.prisma.order.findFirst({ where: { id, storeId: actor.storeId }, select: {
-      id: true, orderCode: true, subtotal: true, discount: true, total: true,
+      id: true, orderCode: true, subtotal: true, discount: true, discountType: true, discountValue: true, total: true,
       paymentMethod: true, paymentStatus: true, orderStatus: true, createdAt: true, updatedAt: true,
+      amountReceived: true, changeAmount: true,
       refundedAt: true, refundReason: true,
       customer: { select: { id: true, name: true, phone: true } },
       staff: { select: { id: true, name: true } },
+      store: { select: { name: true, logoUrl: true, address: true, phone: true, currency: true, timezone: true, locale: true } },
       items: { select: { id: true, productNameSnapshot: true, skuSnapshot: true, quantity: true, unitPrice: true, discount: true, total: true } },
       auditEvents: { orderBy: { createdAt: 'asc' }, select: { action: true, reason: true, createdAt: true, actor: { select: { id: true, name: true } } } },
     } });
@@ -146,12 +149,36 @@ export class OrdersService {
       if (!Number.isSafeInteger(quantity) || quantity > maxStock) throw new BadRequestException('Product quantity exceeds the supported range');
       quantities.set(item.productId, quantity);
     }
-    const discount = new Prisma.Decimal(dto.discount ?? '0');
-    if (discount.isNegative()) throw new BadRequestException('Discount cannot be negative');
+    const hasLegacyDiscount = dto.discount !== undefined;
+    const hasDiscountType = dto.discountType !== undefined;
+    const hasDiscountValue = dto.discountValue !== undefined;
+    if (hasLegacyDiscount && (hasDiscountType || hasDiscountValue)) {
+      throw new BadRequestException('Use either legacy discount or discountType/discountValue, not both');
+    }
+    if (hasDiscountType !== hasDiscountValue) {
+      throw new BadRequestException('discountType and discountValue must be supplied together');
+    }
+    const discountType: OrderDiscountType = dto.discountType ?? 'FIXED';
+    const discountValue = new Prisma.Decimal(dto.discountValue ?? dto.discount ?? '0');
+    if (discountValue.isNegative()) throw new BadRequestException('Discount cannot be negative');
+    if (discountType === 'PERCENTAGE' && discountValue.greaterThan(100)) {
+      throw new BadRequestException('Percentage discount cannot exceed 100');
+    }
+    const isCash = dto.paymentMethod === 'CASH';
+    const hasAmountReceived = dto.amountReceived !== undefined && dto.amountReceived !== null;
+    if (!isCash && hasAmountReceived) throw new BadRequestException('amountReceived is only valid for cash payments');
+    if (!isCash && dto.manualPaymentConfirmed !== true) {
+      throw new BadRequestException('Staff must manually confirm the non-cash payment before checkout');
+    }
+    if (isCash && dto.manualPaymentConfirmed === true) {
+      throw new BadRequestException('Manual non-cash confirmation is not valid for cash payments');
+    }
 
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       try {
         return await this.prisma.$transaction(async (tx) => {
+          const store = await tx.store.findUnique({ where: { id: actor.storeId }, select: { currency: true } });
+          if (!store) throw new NotFoundException('Store not found');
           if (dto.customerId) {
             const customer = await tx.customer.findFirst({ where: { id: dto.customerId, storeId: actor.storeId }, select: { id: true, status: true } });
             if (!customer) throw new NotFoundException('Customer not found');
@@ -178,12 +205,25 @@ export class OrdersService {
             subtotal = subtotal.add(line);
           }
           if (subtotal.greaterThan(maxMoney)) throw new BadRequestException('Order amount exceeds the supported range');
-          if (discount.greaterThan(subtotal)) throw new BadRequestException('Discount cannot exceed subtotal');
+          const discount = calculateDiscountAmount(subtotal, discountType, discountValue, store.currency);
+          if (discount.isNegative() || discount.greaterThan(subtotal)) throw new BadRequestException('Discount cannot exceed subtotal');
           const total = subtotal.sub(discount);
+          if (total.isNegative()) throw new BadRequestException('Order total cannot be negative');
+          let amountReceived: Prisma.Decimal | null = null;
+          let changeAmount: Prisma.Decimal | null = null;
+          if (isCash && hasAmountReceived) {
+            amountReceived = new Prisma.Decimal(dto.amountReceived!);
+            if (amountReceived.isNegative() || amountReceived.greaterThan(maxMoney)) {
+              throw new BadRequestException('Cash amount is outside the supported range');
+            }
+            if (amountReceived.lessThan(total)) throw new BadRequestException('Cash received is less than the order total');
+            changeAmount = amountReceived.sub(total);
+          }
           const orderId = randomUUID();
           const order = await tx.order.create({ data: {
             id: orderId, storeId: actor.storeId, orderCode: `ORD-${randomUUID().toUpperCase()}`,
-            customerId: dto.customerId ?? null, staffId: actor.id, subtotal, discount, total,
+            customerId: dto.customerId ?? null, staffId: actor.id, subtotal, discount,
+            discountType, discountValue, total, amountReceived, changeAmount,
             paymentMethod: dto.paymentMethod, paymentStatus: PaymentStatus.PAID, orderStatus: OrderStatus.COMPLETED,
             items: { create: productIds.map((id) => {
               const product = productById.get(id)!;
@@ -191,8 +231,12 @@ export class OrdersService {
                 quantity: quantities.get(id)!, unitPrice: product.sellingPrice, discount: new Prisma.Decimal(0), total: lineTotals.get(id)! };
             }) },
           }, select: {
-            id: true, orderCode: true, subtotal: true, discount: true, total: true, paymentMethod: true,
+            id: true, orderCode: true, subtotal: true, discount: true, discountType: true, discountValue: true, total: true,
+            amountReceived: true, changeAmount: true, paymentMethod: true,
             paymentStatus: true, orderStatus: true, createdAt: true,
+            customer: { select: { id: true, name: true, phone: true } },
+            staff: { select: { id: true, name: true } },
+            store: { select: { name: true, logoUrl: true, address: true, phone: true, currency: true, timezone: true, locale: true } },
             items: { select: { id: true, productNameSnapshot: true, skuSnapshot: true, quantity: true, unitPrice: true, discount: true, total: true } },
           } });
 

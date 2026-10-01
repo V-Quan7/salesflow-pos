@@ -41,6 +41,11 @@ enum PaymentMethod {
   E_WALLET
 }
 
+enum DiscountType {
+  FIXED
+  PERCENTAGE
+}
+
 enum PaymentStatus {
   PENDING
   PAID
@@ -223,6 +228,7 @@ model Product {
   storeId               String                 @db.Uuid
   categoryId            String                 @db.Uuid
   sku                   String
+  barcode               String?
   name                  String
   description           String?
   imageUrl              String?
@@ -240,6 +246,7 @@ model Product {
   inventoryTransactions InventoryTransaction[]
 
   @@unique([storeId, sku])
+  @@unique([storeId, barcode])
   @@index([storeId])
   @@index([categoryId])
   @@index([name])
@@ -248,17 +255,17 @@ model Product {
 }
 
 model Customer {
-  id        String   @id @default(uuid()) @db.Uuid
-  storeId   String   @db.Uuid
+  id        String         @id @default(uuid()) @db.Uuid
+  storeId   String         @db.Uuid
   name      String
   phone     String?
   email     String?
   address   String?
   note      String?
   status    CustomerStatus @default(ACTIVE)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  store     Store    @relation(fields: [storeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  store     Store          @relation(fields: [storeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   orders    Order[]
 
   @@index([storeId])
@@ -268,28 +275,32 @@ model Customer {
 }
 
 model Order {
-  id            String        @id @default(uuid()) @db.Uuid
-  storeId       String        @db.Uuid
-  orderCode     String
-  customerId    String?       @db.Uuid
-  staffId       String        @db.Uuid
-  subtotal      Decimal       @db.Decimal(65, 30)
-  discount      Decimal       @db.Decimal(65, 30)
-  total         Decimal       @db.Decimal(65, 30)
-  paymentMethod PaymentMethod
-  paymentStatus PaymentStatus
-  orderStatus   OrderStatus
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-  refundedAt    DateTime?
-  refundedBy    String?       @db.Uuid
-  refundReason  String?
-  store         Store         @relation(fields: [storeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  customer      Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  staff         User          @relation(fields: [staffId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  items         OrderItem[]
-  auditEvents   OrderAuditEvent[]
-  refundActor   User?         @relation("OrderRefundActor", fields: [refundedBy], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  id             String            @id @default(uuid()) @db.Uuid
+  storeId        String            @db.Uuid
+  orderCode      String
+  customerId     String?           @db.Uuid
+  staffId        String            @db.Uuid
+  subtotal       Decimal           @db.Decimal(65, 30)
+  discount       Decimal           @db.Decimal(65, 30)
+  discountType   DiscountType      @default(FIXED)
+  discountValue  Decimal           @default(0) @db.Decimal(65, 30)
+  total          Decimal           @db.Decimal(65, 30)
+  paymentMethod  PaymentMethod
+  paymentStatus  PaymentStatus
+  orderStatus    OrderStatus
+  amountReceived Decimal?          @db.Decimal(65, 30)
+  changeAmount   Decimal?          @db.Decimal(65, 30)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  refundedAt     DateTime?
+  refundedBy     String?           @db.Uuid
+  refundReason   String?
+  store          Store             @relation(fields: [storeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  customer       Customer?         @relation(fields: [customerId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  staff          User              @relation(fields: [staffId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  items          OrderItem[]
+  auditEvents    OrderAuditEvent[]
+  refundActor    User?             @relation("OrderRefundActor", fields: [refundedBy], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
   @@unique([storeId, orderCode])
   @@index([storeId])
@@ -333,10 +344,10 @@ model OrderAuditEvent {
   order     Order            @relation(fields: [orderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   actor     User             @relation(fields: [actorId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
+  @@unique([orderId, action])
   @@index([storeId, createdAt])
   @@index([orderId, createdAt])
   @@index([actorId])
-  @@unique([orderId, action])
 }
 
 model InventoryTransaction {

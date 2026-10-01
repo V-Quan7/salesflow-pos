@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, StreamableFile, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 
 import { AuthenticatedUser } from '../auth/auth.types';
@@ -12,11 +12,13 @@ import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { ListProductsDto } from './dto/list-products.dto';
 import { ListPosProductsDto } from './dto/list-pos-products.dto';
+import { LookupPosProductBarcodeDto } from './dto/lookup-pos-product-barcode.dto';
+import { ProductImportService, PRODUCT_IMPORT_MAX_FILE_SIZE, PRODUCT_IMPORT_MIME_TYPE, ProductImportFile } from './product-import.service';
 
 @Controller('products')
 @UseGuards(AuthGuard, PermissionsGuard)
 export class ProductsController {
-  constructor(private readonly products: ProductsService) {}
+  constructor(private readonly products: ProductsService, private readonly productImports: ProductImportService) {}
 
   @Get()
   @RequirePermissions('products:read')
@@ -28,6 +30,35 @@ export class ProductsController {
   @RequirePermissions('products:read')
   listPos(@CurrentUser() actor: AuthenticatedUser, @Query() query: ListPosProductsDto) {
     return this.products.listForPos(actor, query);
+  }
+
+  @Get('pos/lookup')
+  @RequirePermissions('products:read')
+  lookupPosBarcode(@CurrentUser() actor: AuthenticatedUser, @Query() query: LookupPosProductBarcodeDto) {
+    return this.products.lookupForPosByBarcode(actor, query.barcode);
+  }
+
+  @Get('import/template')
+  @RequirePermissions('products:create')
+  async downloadImportTemplate() {
+    return new StreamableFile(await this.productImports.createTemplate(), {
+      type: PRODUCT_IMPORT_MIME_TYPE,
+      disposition: 'attachment; filename="salesflow-products-template.xlsx"',
+    });
+  }
+
+  @Post('import/preview')
+  @UseInterceptors(FileInterceptor('file', productImportUploadOptions()))
+  @RequirePermissions('products:create')
+  previewImport(@CurrentUser() actor: AuthenticatedUser, @UploadedFile() file?: ProductImportFile) {
+    return this.productImports.preview(actor, file!);
+  }
+
+  @Post('import')
+  @UseInterceptors(FileInterceptor('file', productImportUploadOptions()))
+  @RequirePermissions('products:create')
+  importProducts(@CurrentUser() actor: AuthenticatedUser, @UploadedFile() file?: ProductImportFile) {
+    return this.productImports.import(actor, file!);
   }
 
   @Get(':id')
@@ -58,4 +89,10 @@ export class ProductsController {
   remove(@CurrentUser() actor: AuthenticatedUser, @Param('id', ParseUUIDPipe) id: string) {
     return this.products.remove(actor, id);
   }
+}
+
+function productImportUploadOptions() {
+  return {
+    limits: { fileSize: PRODUCT_IMPORT_MAX_FILE_SIZE, files: 1, fields: 0 },
+  };
 }

@@ -1,6 +1,6 @@
 import type { SVGProps } from 'react';
 
-export type IconName = 'dashboard' | 'products' | 'categories' | 'inventory' | 'customers' | 'orders' | 'reports' | 'settings' | 'pos' | 'logout' | 'menu' | 'close' | 'search' | 'plus' | 'minus' | 'cart' | 'edit' | 'trash' | 'chevron' | 'store' | 'user' | 'receipt' | 'trend' | 'box' | 'check' | 'warning' | 'info' | 'calendar' | 'refund';
+export type IconName = 'dashboard' | 'products' | 'categories' | 'inventory' | 'customers' | 'orders' | 'reports' | 'settings' | 'pos' | 'logout' | 'menu' | 'close' | 'search' | 'plus' | 'minus' | 'cart' | 'edit' | 'trash' | 'chevron' | 'store' | 'user' | 'receipt' | 'trend' | 'box' | 'check' | 'warning' | 'info' | 'calendar' | 'refund' | 'barcode';
 
 const paths: Record<IconName, string> = {
   dashboard: 'M3 3h8v8H3z M13 3h8v5h-8z M13 10h8v11h-8z M3 13h8v8H3z',
@@ -26,6 +26,7 @@ const paths: Record<IconName, string> = {
   info: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20 M12 16v-4 M12 8h.01',
   calendar: 'M8 2v4 M16 2v4 M3 10h18 M5 4h14a2 2 0 0 1 2 2v14H3V6a2 2 0 0 1 2-2z M8 14h.01 M12 14h.01 M16 14h.01 M8 18h.01 M12 18h.01',
   refund: 'M3 11a9 9 0 0 1 15.4-6.4L21 7 M21 3v4h-4 M21 13a9 9 0 0 1-15.4 6.4L3 17 M3 21v-4h4',
+  barcode: 'M4 5v14 M8 5v14 M11 5v14 M15 5v14 M18 5v14 M21 5v14',
 };
 
 export function Icon({ name, size = 18, ...props }: SVGProps<SVGSVGElement> & { name: IconName; size?: number }) {

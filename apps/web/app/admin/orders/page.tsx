@@ -2,15 +2,17 @@
 
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { cancelOrder, currentUser, getOrder, getOrders, refundOrder } from '../../../lib/auth-client';
-import type { CurrentUser, OrderRecord } from '../../../lib/auth-client';
+import type { CurrentUser, OrderDetailRecord, OrderRecord } from '../../../lib/auth-client';
 import { Dialog } from '../../../components/ui/Dialog';
 import { EmptyState, LoadingRows } from '../../../components/ui/Feedback';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
+import { ThermalReceipt } from '../../../components/orders/ThermalReceipt';
+import { displayMoney } from '../../../lib/pos-money';
 
 export default function OrdersPage() {
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [items, setItems] = useState<OrderRecord[]>([]);
-  const [selected, setSelected] = useState<OrderRecord | null>(null);
+  const [selected, setSelected] = useState<OrderDetailRecord | null>(null);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [searchInput, setSearchInput] = useState('');
@@ -90,12 +92,14 @@ export default function OrdersPage() {
         <div className="order-status-row"><StatusBadge value={selected.orderStatus} /><StatusBadge value={selected.paymentStatus} /><span className="muted">{selected.paymentMethod.replaceAll('_', ' ')}</span></div>
         <section className="detail-section"><h3>Thông tin đơn</h3><dl className="detail-list"><div><dt>Khách hàng</dt><dd>{selected.customer?.name ?? 'Khách lẻ'}</dd></div><div><dt>Nhân viên</dt><dd>{selected.staff.name}</dd></div><div><dt>Mã đơn</dt><dd>{selected.orderCode}</dd></div></dl></section>
         <section className="detail-section"><h3>Sản phẩm</h3>{selected.items?.length ? <div className="order-lines">{selected.items.map((line) => <div className="order-line" key={line.id}><div><strong>{line.productNameSnapshot}</strong><small>{line.skuSnapshot} · {line.quantity} sản phẩm × {line.unitPrice}</small></div><strong className="numeric">{line.total}</strong></div>)}</div> : <p className="muted">Không có dòng sản phẩm.</p>}</section>
-        <section className="detail-section"><h3>Tổng thanh toán</h3><dl className="detail-list"><div><dt>Tạm tính</dt><dd>{selected.subtotal}</dd></div><div><dt>Giảm giá</dt><dd>− {selected.discount}</dd></div><div className="detail-total"><dt>Tổng</dt><dd>{selected.total}</dd></div></dl></section>
+        <section className="detail-section"><h3>Tổng thanh toán</h3><dl className="detail-list"><div><dt>Tạm tính</dt><dd>{selected.subtotal}</dd></div><div><dt>{selected.discountType === 'PERCENTAGE' ? `Giảm giá (${selected.discountValue}%)` : 'Giảm giá cố định'}</dt><dd>− {selected.discount}</dd></div><div className="detail-total"><dt>Tổng</dt><dd>{selected.total}</dd></div></dl></section>
+        {selected.amountReceived !== null && <section className="detail-section"><h3>Thông tin tiền mặt</h3><dl className="detail-list"><div><dt>Tiền khách đưa</dt><dd>{displayMoney(selected.amountReceived, selected.store.currency, selected.store.locale)}</dd></div><div><dt>Tiền thừa</dt><dd>{displayMoney(selected.changeAmount ?? '0', selected.store.currency, selected.store.locale)}</dd></div></dl></section>}
         {selected.refundedAt && <section className="detail-section"><h3>Thông tin hoàn tiền</h3><p>{new Date(selected.refundedAt).toLocaleString('vi-VN')}</p><p className="muted">{selected.refundReason}</p></section>}
-        {(canCancel && selected.orderStatus === 'PENDING' || canRefund && selected.orderStatus === 'COMPLETED' && selected.paymentStatus === 'PAID') && <div className="button-row">{canCancel && selected.orderStatus === 'PENDING' && <button className="danger-button" onClick={() => { setAction('CANCEL'); setReason(''); setDetailOpen(false); }}>Hủy đơn</button>}{canRefund && selected.orderStatus === 'COMPLETED' && selected.paymentStatus === 'PAID' && <button className="danger-button" onClick={() => { setAction('REFUND'); setReason(''); setDetailOpen(false); }}>Hoàn tiền và nhập lại hàng</button>}</div>}
+        <div className="button-row"><button type="button" className="secondary-button" onClick={() => window.print()}>In hóa đơn</button>{canCancel && selected.orderStatus === 'PENDING' && <button className="danger-button" onClick={() => { setAction('CANCEL'); setReason(''); setDetailOpen(false); }}>Hủy đơn</button>}{canRefund && selected.orderStatus === 'COMPLETED' && selected.paymentStatus === 'PAID' && <button className="danger-button" onClick={() => { setAction('REFUND'); setReason(''); setDetailOpen(false); }}>Hoàn tiền và nhập lại hàng</button>}</div>
         {selected.auditEvents && selected.auditEvents.length > 0 && <section className="detail-section"><h3>Lịch sử thao tác</h3><ol className="timeline">{selected.auditEvents.map((event, index) => <li key={`${event.action}-${index}`}><strong>{event.action === 'REFUND' ? 'Hoàn tiền' : 'Hủy đơn'}</strong><span>{event.actor.name} · {new Date(event.createdAt).toLocaleString('vi-VN')}</span><small>{event.reason}</small></li>)}</ol></section>}
       </div>}
     </Dialog>
+    {selected && detailOpen && <ThermalReceipt order={selected} />}
     <Dialog open={Boolean(action)} onClose={closeAction} title={action === 'CANCEL' ? 'Xác nhận hủy đơn' : 'Xác nhận hoàn tiền'} description={action === 'CANCEL' ? 'Đơn PENDING sẽ chuyển sang CANCELLED.' : 'Thao tác này hoàn toàn bộ tiền và nhập lại số lượng hàng vào kho.'} footer={<><button type="button" className="secondary-button" disabled={saving} onClick={closeAction}>Quay lại</button><button type="submit" form="order-action-form" className="danger-button" disabled={saving || !reason.trim()}>{saving ? 'Đang xử lý…' : action === 'CANCEL' ? 'Xác nhận hủy' : 'Xác nhận hoàn tiền'}</button></>}>
       <form id="order-action-form" className="form-grid" onSubmit={submitAction}><label className="full">Lý do<textarea required minLength={1} maxLength={1000} value={reason} onChange={(event) => setReason(event.target.value)} /></label>{error && <p role="alert" className="notice-error full">{error}</p>}</form>
     </Dialog>

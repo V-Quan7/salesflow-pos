@@ -1,6 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { InventoryTransactionReferenceType, InventoryTransactionType, Prisma, ProductStatus } from '@prisma/client';
-import { randomUUID } from 'node:crypto';
+import { Prisma, ProductStatus } from '@prisma/client';
 
 import { AuthenticatedUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
@@ -10,6 +9,7 @@ import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { ListProductsDto } from './dto/list-products.dto';
 import { ListPosProductsDto } from './dto/list-pos-products.dto';
+import { openingStockTransactionData } from './opening-stock-transaction';
 
 const logger = new Logger('ProductsService');
 const productInclude = { category: { select: { id: true, name: true, slug: true, status: true } } } as const;
@@ -60,6 +60,19 @@ export class ProductsService {
     return { items, total, page: query.page, limit: query.limit, currency: store.currency };
   }
 
+  async lookupForPosByBarcode(actor: AuthenticatedUser, barcode: string) {
+    const product = await this.prisma.product.findFirst({
+      where: { storeId: actor.storeId, barcode: barcode.trim() },
+      select: {
+        id: true, sku: true, name: true, sellingPrice: true, unit: true, stockQuantity: true,
+        status: true, imageUrl: true, category: { select: { id: true, name: true } },
+      },
+    });
+    if (!product) throw new NotFoundException('No product matches this barcode in the current store');
+    if (product.status !== ProductStatus.ACTIVE) throw new ConflictException('The product is inactive');
+    return product;
+  }
+
   async get(actor: AuthenticatedUser, id: string) {
     const product = await this.prisma.product.findFirst({ where: { id, storeId: actor.storeId }, include: productInclude });
     if (!product) throw new NotFoundException('Product not found');
@@ -80,7 +93,7 @@ export class ProductsService {
     try {
       const data: Prisma.ProductUncheckedCreateInput = {
           storeId: actor.storeId, categoryId: dto.categoryId,
-          sku: dto.sku.trim().toUpperCase(), name: dto.name.trim(),
+          sku: dto.sku.trim().toUpperCase(), barcode: dto.barcode?.trim() || null, name: dto.name.trim(),
           description: dto.description?.trim() || null,
           costPrice: new Prisma.Decimal(dto.costPrice), sellingPrice: new Prisma.Decimal(dto.sellingPrice),
           unit: dto.unit.trim(), stockQuantity: dto.stockQuantity, minStock: dto.minStock,
@@ -92,18 +105,14 @@ export class ProductsService {
       return await this.prisma.$transaction(async (transaction) => {
         const product = await transaction.product.create({ data, include: productInclude });
         await transaction.inventoryTransaction.create({
-          data: {
-            storeId: actor.storeId, productId: product.id, type: InventoryTransactionType.ADJUSTMENT,
-            quantity: dto.stockQuantity, beforeQuantity: 0, afterQuantity: dto.stockQuantity,
-            referenceType: InventoryTransactionReferenceType.ADJUSTMENT, referenceId: randomUUID(),
-            note: 'Opening stock', createdBy: actor.id,
-          },
+          data: openingStockTransactionData({ storeId: actor.storeId, productId: product.id, quantity: dto.stockQuantity, actorId: actor.id }),
         });
         return product;
       });
     } catch (error) {
       if (imageKey) await this.storage.delete(imageKey).catch(() => undefined);
-      if (this.isUniqueError(error)) throw new ConflictException('Product SKU already exists in this store');
+      const uniqueMessage = this.uniqueConflictMessage(error);
+      if (uniqueMessage) throw new ConflictException(uniqueMessage);
       if (this.isForeignKeyError(error)) throw new BadRequestException('The selected category is unavailable');
       throw error;
     }
@@ -129,6 +138,7 @@ export class ProductsService {
         where: { id },
         data: {
           ...(dto.sku !== undefined ? { sku: dto.sku.trim().toUpperCase() } : {}),
+          ...(dto.barcode !== undefined ? { barcode: dto.barcode?.trim() || null } : {}),
           ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
           ...(dto.description !== undefined ? { description: dto.description?.trim() || null } : {}),
           ...(dto.categoryId !== undefined ? { categoryId: dto.categoryId } : {}),
@@ -147,7 +157,8 @@ export class ProductsService {
       return updated;
     } catch (error) {
       if (nextImageKey) await this.storage.delete(nextImageKey).catch(() => undefined);
-      if (this.isUniqueError(error)) throw new ConflictException('Product SKU already exists in this store');
+      const uniqueMessage = this.uniqueConflictMessage(error);
+      if (uniqueMessage) throw new ConflictException(uniqueMessage);
       if (this.isForeignKeyError(error)) throw new BadRequestException('The selected category is unavailable');
       throw error;
     }
@@ -187,6 +198,16 @@ export class ProductsService {
 
   private isUniqueError(error: unknown): boolean {
     return typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2002';
+  }
+
+  private uniqueConflictMessage(error: unknown): string | null {
+    if (!this.isUniqueError(error)) return null;
+    if (typeof error === 'object' && error !== null && 'meta' in error && typeof error.meta === 'object' && error.meta !== null && 'target' in error.meta) {
+      const target = error.meta.target;
+      const fields = Array.isArray(target) ? target.map(String) : typeof target === 'string' ? [target] : [];
+      if (fields.some((field) => field.toLowerCase().includes('barcode'))) return 'Product barcode already exists in this store';
+    }
+    return 'Product SKU already exists in this store';
   }
 
   private isForeignKeyError(error: unknown): boolean {

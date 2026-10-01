@@ -72,6 +72,29 @@ test('product image removal uses the existing PATCH contract', async () => {
   assert.equal(calls[0][1].body.get('removeImage'), 'true');
 });
 
+test('Product Excel clients download the template and upload the same .xlsx file without Store selection', async () => {
+  response = { ok: true, status: 200, blob: async () => new globalThis.Blob(['template']) };
+  const template = await authClient.exports.downloadProductImportTemplate();
+  assert.equal(await template.text(), 'template');
+  assert.match(calls[0][0], /\/products\/import\/template$/);
+  assert.equal(calls[0][1].credentials, 'include');
+
+  response = { ok: true, status: 201, json: async () => ({ totalRows: 1, validRows: 1, errorRows: 0, errors: [], rows: [] }) };
+  const file = new globalThis.File(['workbook'], 'products.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  await authClient.exports.previewProductImport(file);
+  assert.match(calls[1][0], /\/products\/import\/preview$/);
+  assert.equal(calls[1][1].credentials, 'include');
+  assert.equal(calls[1][1].body instanceof globalThis.FormData, true);
+  assert.equal(calls[1][1].body.get('file').name, 'products.xlsx');
+  assert.equal(calls[1][1].body.has('storeId'), false);
+
+  response = { ok: true, status: 201, json: async () => ({ createdCount: 1 }) };
+  await authClient.exports.confirmProductImport(file);
+  assert.match(calls[2][0], /\/products\/import$/);
+  assert.equal(calls[2][1].method, 'POST');
+  assert.equal(calls[2][1].body.get('file').name, 'products.xlsx');
+});
+
 test('inventory client sends tenant-neutral list, adjustment, and history requests', async () => {
   await authClient.exports.getInventory({ page: 2, limit: 20, search: 'tea', status: 'ACTIVE', lowStock: true });
   assert.match(calls[0][0], /\/inventory\?page=2&limit=20&search=tea&status=ACTIVE&lowStock=true$/);
@@ -97,6 +120,14 @@ test('Customer and POS clients use the Phase 6/7 HTTP contracts', async () => {
   await authClient.exports.createOrder(checkout);
   assert.match(calls[4][0], /\/orders$/); assert.equal(calls[4][1].method, 'POST');
   assert.equal(calls[4][1].body, JSON.stringify(checkout));
+});
+
+test('POS barcode lookup trims input, preserves leading zeroes, and uses the authenticated API client', async () => {
+  await authClient.exports.getPosProductByBarcode(' 0001234567890 ');
+  const url = new globalThis.URL(calls[0][0]);
+  assert.equal(url.pathname, '/api/products/pos/lookup');
+  assert.equal(url.searchParams.get('barcode'), '0001234567890');
+  assert.equal(calls[0][1].credentials, 'include');
 });
 
 test('Order and report clients call scoped endpoints and send approved filters/actions', async () => {

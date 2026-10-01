@@ -8,10 +8,12 @@ type ToastProps = {
   title: string;
   description: string;
   onClose: () => void;
+  actionLabel?: string;
+  onAction?: () => void;
   duration?: number;
 };
 
-export function Toast({ toastId, title, description, onClose, duration = 3600 }: ToastProps) {
+export function Toast({ toastId, title, description, onClose, actionLabel, onAction, duration = 3600 }: ToastProps) {
   const [exiting, setExiting] = useState(false);
   const closing = useRef(false);
   const exitTimer = useRef<number | null>(null);
@@ -22,6 +24,11 @@ export function Toast({ toastId, title, description, onClose, duration = 3600 }:
     setExiting(true);
     exitTimer.current = window.setTimeout(onClose, 180);
   }, [onClose]);
+
+  const runAction = useCallback(() => {
+    onAction?.();
+    close();
+  }, [close, onAction]);
 
   useEffect(() => {
     closing.current = false;
@@ -38,6 +45,7 @@ export function Toast({ toastId, title, description, onClose, duration = 3600 }:
       <span className="toast-success-icon"><Icon name="check" size={22} /></span>
       <span className="toast-copy"><strong>{title}</strong><span>{description}</span></span>
       <button type="button" className="toast-close" aria-label="Đóng thông báo" onClick={close}>×</button>
+      {actionLabel && onAction && <button type="button" className="toast-action" onClick={runAction}><Icon name="receipt" size={16} />{actionLabel}</button>}
     </div>
   </div>;
 }

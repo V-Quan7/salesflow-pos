@@ -55,7 +55,7 @@ export interface CatalogCategory {
   status: 'ACTIVE' | 'INACTIVE'; createdAt: string; updatedAt: string; _count?: { products: number };
 }
 export interface CatalogProduct {
-  id: string; storeId: string; categoryId: string; sku: string; name: string; description: string | null;
+  id: string; storeId: string; categoryId: string; sku: string; barcode: string | null; name: string; description: string | null;
   imageUrl: string | null; costPrice: string; sellingPrice: string; unit: string; stockQuantity: number;
   minStock: number; status: 'ACTIVE' | 'INACTIVE'; createdAt: string; updatedAt: string;
   category: Pick<CatalogCategory, 'id' | 'name' | 'slug' | 'status'>;
@@ -67,8 +67,17 @@ export interface CatalogQuery {
 }
 export interface CategoryInput { name: string; slug: string; description?: string; status?: 'ACTIVE' | 'INACTIVE'; }
 export interface ProductInput {
-  sku: string; name: string; description?: string; categoryId: string; costPrice: string;
+  sku: string; barcode?: string | null; name: string; description?: string; categoryId: string; costPrice: string;
   sellingPrice: string; unit: string; stockQuantity: number; minStock: number; status?: 'ACTIVE' | 'INACTIVE';
+}
+export interface ProductImportRowError { row: number; column: string; message: string; }
+export interface ProductImportPreviewRow {
+  row: number; sku: string; barcode: string; name: string; categorySlug: string; categoryName: string;
+  unit: string; costPrice: string; sellingPrice: string; minStock: number; status: 'ACTIVE' | 'INACTIVE';
+  openingStock: number; description: string; errors: ProductImportRowError[];
+}
+export interface ProductImportPreview {
+  totalRows: number; validRows: number; errorRows: number; errors: ProductImportRowError[]; rows: ProductImportPreviewRow[];
 }
 export type ProductUpdateInput = Omit<Partial<ProductInput>, 'stockQuantity'> & { removeImage?: boolean };
 export interface InventoryItem extends CatalogProduct { lowStock: boolean; }
@@ -103,22 +112,38 @@ export interface PosProduct {
 export interface PosProductPage extends CatalogPage<PosProduct> { currency: string; }
 export interface CreateOrderInput {
   customerId?: string; items: { productId: string; quantity: number }[]; discount?: string;
+  discountType?: 'FIXED' | 'PERCENTAGE'; discountValue?: string; amountReceived?: string; manualPaymentConfirmed?: boolean;
   paymentMethod: 'CASH' | 'CARD' | 'BANK_TRANSFER' | 'E_WALLET';
 }
+export interface OrderReceiptStore {
+  name: string; logoUrl: string | null; address: string | null; phone: string | null;
+  currency: string; timezone: string; locale: string;
+}
 export interface CreatedOrder {
-  id: string; orderCode: string; subtotal: string; discount: string; total: string;
+  id: string; orderCode: string; subtotal: string; discount: string; discountType: 'FIXED' | 'PERCENTAGE'; discountValue: string; total: string;
+  amountReceived: string | null; changeAmount: string | null;
   paymentMethod: CreateOrderInput['paymentMethod']; paymentStatus: string; orderStatus: string;
-  items: { id: string; productNameSnapshot: string; skuSnapshot: string; quantity: number; unitPrice: string; total: string }[];
+  createdAt: string; customer: { id: string; name: string; phone: string | null } | null;
+  staff: { id: string; name: string }; store: OrderReceiptStore;
+  items: { id: string; productNameSnapshot: string; skuSnapshot: string; quantity: number; unitPrice: string; discount: string; total: string }[];
 }
 export interface OrderRecord {
   id: string; orderCode: string; subtotal: string; discount: string; total: string;
+  discountType?: 'FIXED' | 'PERCENTAGE'; discountValue?: string; amountReceived?: string | null; changeAmount?: string | null;
   paymentMethod: CreateOrderInput['paymentMethod']; paymentStatus: string; orderStatus: string;
   createdAt: string; updatedAt: string;
   customer: { id: string; name: string; phone?: string | null; email?: string | null } | null;
   staff: { id: string; name: string; email?: string };
+  store?: OrderReceiptStore;
   items?: { id: string; productNameSnapshot: string; skuSnapshot: string; quantity: number; unitPrice: string; discount: string; total: string }[];
   refundedAt?: string | null; refundReason?: string | null;
   auditEvents?: { action: string; reason: string; createdAt: string; actor: { id: string; name: string } }[];
+}
+export interface OrderDetailRecord extends OrderRecord {
+  discountType: 'FIXED' | 'PERCENTAGE'; discountValue: string;
+  amountReceived: string | null; changeAmount: string | null;
+  store: OrderReceiptStore;
+  items: NonNullable<OrderRecord['items']>;
 }
 export interface OrderQuery {
   page?: number; limit?: number; search?: string; status?: string; paymentStatus?: string;
@@ -243,6 +268,29 @@ export function createProduct(input: ProductInput, image?: File) {
 export function updateProduct(id: string, input: ProductUpdateInput, image?: File) {
   return saveProduct<CatalogProduct>(`/products/${encodeURIComponent(id)}`, 'PATCH', input, image);
 }
+export async function downloadProductImportTemplate(): Promise<Blob> {
+  const response = await fetch(`${API_BASE}/products/import/template`, { credentials: 'include' });
+  if (!response.ok) throw await productImportHttpError(response);
+  return response.blob();
+}
+export async function previewProductImport(file: File): Promise<ProductImportPreview> {
+  return uploadProductImport('/products/import/preview', file);
+}
+export async function confirmProductImport(file: File): Promise<{ createdCount: number }> {
+  return uploadProductImport('/products/import', file);
+}
+async function uploadProductImport<T>(path: string, file: File): Promise<T> {
+  const form = new FormData();
+  form.set('file', file);
+  const response = await fetch(`${API_BASE}${path}`, { method: 'POST', credentials: 'include', body: form });
+  if (!response.ok) throw await productImportHttpError(response);
+  return response.json() as Promise<T>;
+}
+async function productImportHttpError(response: Response) {
+  const responseBody = await response.json().catch(() => undefined);
+  const message = typeof responseBody?.message === 'string' ? responseBody.message : 'Product import request failed';
+  return Object.assign(new Error(message), { status: response.status, responseBody });
+}
 export function getInventory(query: InventoryQuery = {}) {
   return request<CatalogPage<InventoryItem>>(`/inventory${queryString(query)}`);
 }
@@ -273,6 +321,9 @@ export function getCustomerHistory(id: string, query: { page?: number; limit?: n
 export function getPosProducts(query: { page?: number; limit?: number; search?: string } = {}) {
   return request<PosProductPage>(`/products/pos${queryString(query)}`);
 }
+export function getPosProductByBarcode(barcode: string) {
+  return request<PosProduct>(`/products/pos/lookup${queryString({ barcode: barcode.trim() })}`);
+}
 export function createOrder(input: CreateOrderInput) {
   return request<CreatedOrder>('/orders', { method: 'POST', body: JSON.stringify(input) });
 }
@@ -286,7 +337,7 @@ function orderQueryString(query: object) {
 export function getOrders(query: OrderQuery = {}) {
   return request<CatalogPage<OrderRecord>>(`/orders${orderQueryString(query)}`);
 }
-export function getOrder(id: string) { return request<OrderRecord>(`/orders/${encodeURIComponent(id)}`); }
+export function getOrder(id: string) { return request<OrderDetailRecord>(`/orders/${encodeURIComponent(id)}`); }
 export function updateOrderStatus(id: string, status: 'COMPLETED' | 'CANCELLED' | 'REFUNDED', reason?: string) {
   return request<{ id: string; orderStatus: string; paymentStatus: string; refundedAt?: string }>(`/orders/${encodeURIComponent(id)}/status`, {
     method: 'PATCH', body: JSON.stringify({ status, ...(reason ? { reason } : {}) }),

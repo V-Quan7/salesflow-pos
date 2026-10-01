@@ -3,11 +3,15 @@ import { IsBoolean, IsIn, IsInt, IsOptional, IsString, IsUUID, Length, Matches, 
 
 const decimalPattern = /^(?:0|[1-9]\d{0,34})(?:\.\d{1,30})?$/;
 const decimalString = ({ value }: { value: unknown }) => typeof value === 'number' ? String(value) : value;
+const normalizeBarcode = ({ value }: { value: unknown }) => typeof value === 'string' ? value.trim() || null : value;
 
 export class UpdateProductDto {
   @IsOptional() @Transform(({ value }) => typeof value === 'string' ? value.trim().toUpperCase() : value)
   @IsString() @Length(1, 100)
   sku?: string;
+
+  @IsOptional() @Transform(normalizeBarcode) @IsString() @Length(1, 128)
+  barcode?: string | null;
 
   @IsOptional() @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
   @IsString() @Length(1, 160)

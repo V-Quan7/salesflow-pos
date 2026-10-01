@@ -6,6 +6,7 @@ process.env.JWT_SECRET = randomBytes(32).toString('hex');
 const { Test } = require('@nestjs/testing');
 const { ValidationPipe, ServiceUnavailableException } = require('@nestjs/common');
 const argon2 = require('argon2');
+const ExcelJS = require('exceljs');
 const { AppModule } = require('../dist/app.module');
 const { PrismaService } = require('../dist/prisma/prisma.service');
 const { StorageService } = require('../dist/storage/storage.service');
@@ -27,6 +28,8 @@ const ids = {
   product: '70000000-0000-4000-8000-000000000001',
   usedProduct: '70000000-0000-4000-8000-000000000002',
   foreignProduct: '40000000-0000-4000-8000-000000000011',
+  barcodeInactive: '70000000-0000-4000-8000-000000000003',
+  barcodeForeign: '70000000-0000-4000-8000-000000000004',
 };
 const storeRecord = {
   id: ids.store, code: 'TEST', name: 'Test Store', logoUrl: 'https://assets.example.test/old-logo.png', faviconUrl: null,
@@ -78,9 +81,11 @@ before(async () => {
     { id: ids.foreignCategory, storeId: '40000000-0000-4000-8000-000000000001', name: 'Foreign', slug: 'foreign', description: null, status: 'ACTIVE', createdAt: now, updatedAt: now },
   ];
   testProducts = [
-    { id: ids.product, storeId: ids.store, categoryId: ids.category, sku: 'DRINK-1', name: 'Water', description: null, imageUrl: null, costPrice: '5', sellingPrice: '10', unit: 'bottle', stockQuantity: 4, minStock: 1, status: 'ACTIVE', orderItemCount: 0, inventoryTransactionCount: 0, createdAt: now, updatedAt: now },
-    { id: ids.usedProduct, storeId: ids.store, categoryId: ids.usedCategory, sku: 'SOLD-1', name: 'Sold item', description: null, imageUrl: 'https://assets.example.test/product-old.png', costPrice: '5', sellingPrice: '10', unit: 'each', stockQuantity: 0, minStock: 0, status: 'ACTIVE', orderItemCount: 1, inventoryTransactionCount: 0, createdAt: now, updatedAt: now },
-    { id: ids.foreignProduct, storeId: '40000000-0000-4000-8000-000000000001', categoryId: ids.foreignCategory, sku: 'OTHER-1', name: 'Foreign item', description: null, imageUrl: null, costPrice: '1', sellingPrice: '2', unit: 'each', stockQuantity: 0, minStock: 0, status: 'ACTIVE', orderItemCount: 0, inventoryTransactionCount: 0, createdAt: now, updatedAt: now },
+    { id: ids.product, storeId: ids.store, categoryId: ids.category, sku: 'DRINK-1', barcode: '0001234567890', name: 'Water', description: null, imageUrl: null, costPrice: '5', sellingPrice: '10', unit: 'bottle', stockQuantity: 4, minStock: 1, status: 'ACTIVE', orderItemCount: 0, inventoryTransactionCount: 0, createdAt: now, updatedAt: now },
+    { id: ids.usedProduct, storeId: ids.store, categoryId: ids.usedCategory, sku: 'SOLD-1', barcode: null, name: 'Sold item', description: null, imageUrl: 'https://assets.example.test/product-old.png', costPrice: '5', sellingPrice: '10', unit: 'each', stockQuantity: 0, minStock: 0, status: 'ACTIVE', orderItemCount: 1, inventoryTransactionCount: 0, createdAt: now, updatedAt: now },
+    { id: ids.foreignProduct, storeId: '40000000-0000-4000-8000-000000000001', categoryId: ids.foreignCategory, sku: 'OTHER-1', barcode: 'FOREIGN-BC-01', name: 'Foreign item', description: null, imageUrl: null, costPrice: '1', sellingPrice: '2', unit: 'each', stockQuantity: 0, minStock: 0, status: 'ACTIVE', orderItemCount: 0, inventoryTransactionCount: 0, createdAt: now, updatedAt: now },
+    { id: ids.barcodeInactive, storeId: ids.store, categoryId: ids.category, sku: 'INACTIVE-1', barcode: 'INACTIVE-BC-01', name: 'Inactive item', description: null, imageUrl: null, costPrice: '1', sellingPrice: '2', unit: 'each', stockQuantity: 2, minStock: 0, status: 'INACTIVE', orderItemCount: 0, inventoryTransactionCount: 0, createdAt: now, updatedAt: now },
+    { id: ids.barcodeForeign, storeId: '40000000-0000-4000-8000-000000000001', categoryId: ids.foreignCategory, sku: 'FOREIGN-2', barcode: 'FOREIGN-BC-02', name: 'Other store item', description: null, imageUrl: null, costPrice: '1', sellingPrice: '2', unit: 'each', stockQuantity: 2, minStock: 0, status: 'ACTIVE', orderItemCount: 0, inventoryTransactionCount: 0, createdAt: now, updatedAt: now },
   ];
   testInventoryTransactions = [];
   globalThis.__inventoryTransactions = testInventoryTransactions;
@@ -126,7 +131,8 @@ before(async () => {
     },
     category: {
       findMany: async ({ where, skip = 0, take, orderBy }) => {
-        let rows = testCategories.filter((row) => row.storeId === where.storeId && (!where.status || row.status === where.status));
+        if (where.slug?.in) return testCategories.filter((row) => row.storeId === where.storeId && where.slug.in.includes(row.slug)).map((row) => ({ id: row.id, slug: row.slug, name: row.name }));
+        let rows = testCategories.filter((row) => row.storeId === where.storeId && (!where.status || row.status === where.status) && (!where.slug?.in || where.slug.in.includes(row.slug)));
         if (where.OR) rows = rows.filter((row) => where.OR.some((condition) => Object.entries(condition).some(([field, filter]) => row[field].toLowerCase().includes(filter.contains.toLowerCase()))));
         const [field, direction] = Object.entries(orderBy)[0] ?? ['name', 'asc'];
         rows.sort((a, b) => direction === 'asc' ? String(a[field]).localeCompare(String(b[field])) : String(b[field]).localeCompare(String(a[field])));
@@ -159,6 +165,10 @@ before(async () => {
     product: {
       fields: { minStock: { field: 'minStock' } },
       findMany: async ({ where, skip = 0, take, orderBy, include }) => {
+        if (where.OR?.some((condition) => condition.sku?.in || condition.barcode?.in)) {
+          return testProducts.filter((row) => row.storeId === where.storeId && where.OR.some((condition) => condition.sku?.in?.includes(row.sku) || (row.barcode && condition.barcode?.in?.includes(row.barcode))))
+            .map((row) => ({ sku: row.sku, barcode: row.barcode }));
+        }
         let rows = testProducts.filter((row) => row.storeId === where.storeId && (!where.status || row.status === where.status) && (!where.categoryId || row.categoryId === where.categoryId));
         if (where.stockQuantity?.lte === prisma.product.fields.minStock) rows = rows.filter((row) => row.stockQuantity <= row.minStock);
         if (where.NOT?.stockQuantity?.lte === prisma.product.fields.minStock) rows = rows.filter((row) => !(where.NOT.status === row.status && row.stockQuantity <= row.minStock));
@@ -168,15 +178,30 @@ before(async () => {
         return rows.slice(skip, skip + take).map((row) => ({ ...row, category: testCategories.find((category) => category.id === row.categoryId) }));
       },
       count: async ({ where }) => testProducts.filter((row) => row.storeId === where.storeId && (!where.status || row.status === where.status) && (!where.categoryId || row.categoryId === where.categoryId) && (!where.OR || where.OR.some((condition) => Object.entries(condition).some(([field, filter]) => row[field].toLowerCase().includes(filter.contains.toLowerCase())))) && (where.stockQuantity?.lte !== prisma.product.fields.minStock || row.stockQuantity <= row.minStock) && (!where.NOT || !(where.NOT.status === row.status && row.stockQuantity <= row.minStock))).length,
-      findFirst: async ({ where, include }) => {
-        const row = testProducts.find((product) => product.id === where.id && product.storeId === where.storeId);
+      findFirst: async ({ where, include, select }) => {
+        const row = testProducts.find((product) => product.storeId === where.storeId && (!where.id || product.id === where.id) && (!where.barcode || product.barcode === where.barcode));
         if (!row) return null;
+        if (select) {
+          const selected = Object.fromEntries(Object.keys(select).filter((key) => select[key] === true).map((key) => [key, row[key]]));
+          if (select.category) selected.category = { id: ids.category, name: testCategories.find((category) => category.id === row.categoryId)?.name };
+          return selected;
+        }
         return { ...row, ...(include?._count ? { _count: { orderItems: row.orderItemCount, inventoryTransactions: row.inventoryTransactionCount } } : {}), category: testCategories.find((category) => category.id === row.categoryId) };
       },
       create: async ({ data }) => {
-        if (testProducts.some((row) => row.storeId === data.storeId && row.sku === data.sku)) throw Object.assign(Error('unique'), { code: 'P2002' });
+        if (testProducts.some((row) => row.storeId === data.storeId && row.sku === data.sku)) throw Object.assign(Error('unique'), { code: 'P2002', meta: { target: ['storeId', 'sku'] } });
+        if (data.barcode && testProducts.some((row) => row.storeId === data.storeId && row.barcode === data.barcode)) throw Object.assign(Error('unique'), { code: 'P2002', meta: { target: ['storeId', 'barcode'] } });
         const row = { ...data, id: require('node:crypto').randomUUID(), orderItemCount: 0, inventoryTransactionCount: 0, createdAt: now, updatedAt: now };
         testProducts.push(row); return { ...row, category: testCategories.find((category) => category.id === row.categoryId) };
+      },
+      createMany: async ({ data }) => {
+        if (globalThis.__forceImportUniqueConflict) throw Object.assign(Error('concurrent unique conflict'), { code: 'P2002', meta: { target: ['storeId', 'sku'] } });
+        for (const product of data) {
+          if (testProducts.some((row) => row.storeId === product.storeId && row.sku === product.sku)) throw Object.assign(Error('unique'), { code: 'P2002', meta: { target: ['storeId', 'sku'] } });
+          if (product.barcode && testProducts.some((row) => row.storeId === product.storeId && row.barcode === product.barcode)) throw Object.assign(Error('unique'), { code: 'P2002', meta: { target: ['storeId', 'barcode'] } });
+          testProducts.push({ ...product, costPrice: String(product.costPrice), sellingPrice: String(product.sellingPrice), orderItemCount: 0, inventoryTransactionCount: 0, createdAt: now, updatedAt: now });
+        }
+        return { count: data.length };
       },
       updateMany: async ({ where, data }) => {
         const row = testProducts.find((product) => product.id === where.id && product.storeId === where.storeId && product.stockQuantity === where.stockQuantity);
@@ -190,6 +215,7 @@ before(async () => {
         const row = testProducts.find((product) => product.id === where.id);
         if (!row) throw Error('not found');
         if (data.sku && testProducts.some((product) => product.id !== row.id && product.storeId === row.storeId && product.sku === data.sku)) throw Object.assign(Error('unique'), { code: 'P2002' });
+        if (data.barcode && testProducts.some((product) => product.id !== row.id && product.storeId === row.storeId && product.barcode === data.barcode)) throw Object.assign(Error('unique'), { code: 'P2002', meta: { target: ['storeId', 'barcode'] } });
         Object.assign(row, data, { updatedAt: now });
         return { ...row, category: testCategories.find((category) => category.id === row.categoryId) };
       },
@@ -218,6 +244,15 @@ before(async () => {
         const product = testProducts.find((item) => item.id === data.productId);
         if (product) product.inventoryTransactionCount += 1;
         return row;
+      },
+      createMany: async ({ data }) => {
+        if (globalThis.__failInventoryTransactionCreateMany) throw Error('simulated inventory history write failure');
+        for (const transaction of data) {
+          testInventoryTransactions.push({ ...transaction, createdAt: now });
+          const product = testProducts.find((item) => item.id === transaction.productId);
+          if (product) product.inventoryTransactionCount += 1;
+        }
+        return { count: data.length };
       },
       findMany: async ({ where, skip = 0, take, orderBy, include }) => {
         const rows = testInventoryTransactions.filter((row) => row.storeId === where.storeId && row.productId === where.productId);
@@ -440,6 +475,48 @@ test('Category CRUD enforces tenant scope, slug uniqueness, filters and safe del
   assert.equal((await deleted.json()).deleted, true);
 });
 
+test('POS barcode lookup preserves exact codes and enforces authentication, permission and Store isolation', async () => {
+  assert.equal((await fetch(`${base}/products/pos/lookup?barcode=0001234567890`)).status, 401);
+  const cookie = await catalogLogin();
+  const found = await fetch(`${base}/products/pos/lookup?barcode=%200001234567890%20`, { headers: { cookie } });
+  assert.equal(found.status, 200);
+  const product = await found.json();
+  assert.equal(product.barcode, undefined);
+  assert.equal(product.id, ids.product);
+  assert.equal(product.sku, 'DRINK-1');
+  assert.equal('costPrice' in product, false);
+  assert.equal('storeId' in product, false);
+
+  assert.equal((await fetch(`${base}/products/pos/lookup?barcode=INACTIVE-BC-01`, { headers: { cookie } })).status, 409);
+  assert.equal((await fetch(`${base}/products/pos/lookup?barcode=FOREIGN-BC-01`, { headers: { cookie } })).status, 404);
+  assert.equal((await fetch(`${base}/products/pos/lookup?barcode=FOREIGN-BC-02`, { headers: { cookie } })).status, 404);
+  assert.equal((await fetch(`${base}/products/pos/lookup?barcode=` , { headers: { cookie } })).status, 400);
+  assert.equal((await fetch(`${base}/products/pos/lookup?barcode=0001234567890&storeId=40000000-0000-4000-8000-000000000001`, { headers: { cookie } })).status, 400);
+
+  const duplicate = await fetch(`${base}/products`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify(productPayload({ sku: 'DUP-BARCODE', stockQuantity: 0, barcode: '0001234567890' })) });
+  assert.equal(duplicate.status, 409);
+  assert.match((await duplicate.json()).message, /barcode/i);
+
+  const differentStoreBarcode = await fetch(`${base}/products`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify(productPayload({ sku: 'CROSS-STORE-BC', stockQuantity: 0, barcode: 'FOREIGN-BC-01' })) });
+  assert.equal(differentStoreBarcode.status, 201);
+  const created = await differentStoreBarcode.json();
+  assert.equal(created.barcode, 'FOREIGN-BC-01');
+  assert.equal(created.storeId, ids.store);
+  const duplicateUpdate = await fetch(`${base}/products/${created.id}`, { method: 'PATCH', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ barcode: '0001234567890' }) });
+  assert.equal(duplicateUpdate.status, 409);
+  const clearBarcode = await fetch(`${base}/products/${created.id}`, { method: 'PATCH', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ barcode: '  ' }) });
+  assert.equal(clearBarcode.status, 200);
+  assert.equal((await clearBarcode.json()).barcode, null);
+  assert.equal((await fetch(`${base}/products/${created.id}`, { method: 'DELETE', headers: { cookie } })).status, 200);
+
+  const staff = testUsers.find((user) => user.id === ids.staff);
+  const originalPermissions = staff.role.permissions;
+  staff.role.permissions = originalPermissions.filter(({ permission }) => permission.code !== 'products:read');
+  const deniedCookie = await catalogLogin('staff@example.test');
+  assert.equal((await fetch(`${base}/products/pos/lookup?barcode=0001234567890`, { headers: { cookie: deniedCookie } })).status, 403);
+  staff.role.permissions = originalPermissions;
+});
+
 test('Product CRUD enforces SKU uniqueness, same-store Category and product Store isolation', async () => {
   const cookie = await catalogLogin();
   assert.equal((await fetch(`${base}/products`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(productPayload()) })).status, 401);
@@ -477,6 +554,154 @@ test('Product CRUD enforces SKU uniqueness, same-store Category and product Stor
   assert.equal(removable.status, 200);
   assert.equal((await removable.json()).id, product.id);
 });
+
+test('Product Excel template, preview, import, RBAC, Store isolation and opening stock behavior', async () => {
+  const owner = await catalogLogin();
+  const staff = await catalogLogin('staff@example.test');
+  assert.equal((await fetch(`${base}/products/import/template`)).status, 401);
+  assert.equal((await fetch(`${base}/products/import/template`, { headers: { cookie: staff } })).status, 403);
+
+  const templateResponse = await fetch(`${base}/products/import/template`, { headers: { cookie: owner } });
+  assert.equal(templateResponse.status, 200);
+  assert.match(templateResponse.headers.get('content-type'), /spreadsheetml/);
+  const templateWorkbook = new ExcelJS.Workbook();
+  await templateWorkbook.xlsx.load(Buffer.from(await templateResponse.arrayBuffer()));
+  assert.equal(templateWorkbook.worksheets[0].name, 'Products');
+  assert.equal(templateWorkbook.worksheets[0].getRow(1).getCell(2).value, 'Barcode');
+
+  const form = await productImportForm([
+    [' bulk-001 ', '000123450001', 'Imported drink', 'DRINKS', 'bottle', 2.5, 5, 2, 'ACTIVE', 5, 'Opening batch'],
+    ['BULK-002', '', 'Imported second', 'drinks', 'each', 1, 2, 0, 'INACTIVE', '', ''],
+  ]);
+  const deniedPreview = await fetch(`${base}/products/import/preview`, { method: 'POST', headers: { cookie: staff }, body: form });
+  assert.equal(deniedPreview.status, 403);
+  const productCountBeforePreview = testProducts.length;
+  const previewResponse = await fetch(`${base}/products/import/preview`, { method: 'POST', headers: { cookie: owner }, body: await productImportForm([
+    [' bulk-001 ', '000123450001', 'Imported drink', 'DRINKS', 'bottle', 2.5, 5, 2, 'ACTIVE', 5, 'Opening batch'],
+    ['BULK-002', '', 'Imported second', 'drinks', 'each', 1, 2, 0, 'INACTIVE', '', ''],
+  ]) });
+  assert.equal(previewResponse.status, 201);
+  const preview = await previewResponse.json();
+  assert.equal(preview.totalRows, 2);
+  assert.equal(preview.validRows, 2);
+  assert.equal(preview.errorRows, 0);
+  assert.equal(preview.rows[0].sku, 'BULK-001');
+  assert.equal(preview.rows[0].barcode, '000123450001');
+  assert.equal(preview.rows[0].categoryName, 'Drinks');
+  assert.equal(preview.rows[1].openingStock, 0);
+  assert.equal(testProducts.length, productCountBeforePreview);
+  const storeChoiceForm = await productImportForm([
+    ['BULK-STORE', '', 'Ignored Store field', 'drinks', 'each', 1, 2, 0, 'ACTIVE', '', ''],
+  ]);
+  storeChoiceForm.set('storeId', '40000000-0000-4000-8000-000000000001');
+  assert.equal((await fetch(`${base}/products/import/preview`, { method: 'POST', headers: { cookie: owner }, body: storeChoiceForm })).status, 400);
+
+  const result = await fetch(`${base}/products/import`, { method: 'POST', headers: { cookie: owner }, body: await productImportForm([
+    [' bulk-001 ', '000123450001', 'Imported drink', 'DRINKS', 'bottle', 2.5, 5, 2, 'ACTIVE', 5, 'Opening batch'],
+    ['BULK-002', '', 'Imported second', 'drinks', 'each', 1, 2, 0, 'INACTIVE', '', ''],
+  ]) });
+  assert.equal(result.status, 201);
+  assert.deepEqual(await result.json(), { createdCount: 2 });
+  const imported = testProducts.filter((row) => row.sku.startsWith('BULK-'));
+  assert.equal(imported.length, 2);
+  assert.equal(imported.find((row) => row.sku === 'BULK-001').barcode, '000123450001');
+  assert.equal(imported.find((row) => row.sku === 'BULK-001').stockQuantity, 5);
+  assert.equal(imported.find((row) => row.sku === 'BULK-002').stockQuantity, 0);
+  const opening = testInventoryTransactions.find((row) => row.productId === imported.find((item) => item.sku === 'BULK-001').id);
+  assert.equal(opening.type, 'ADJUSTMENT');
+  assert.equal(opening.beforeQuantity, 0);
+  assert.equal(opening.afterQuantity, 5);
+  assert.equal(opening.referenceType, 'ADJUSTMENT');
+  assert.equal(opening.createdBy, ids.owner);
+  const productIds = new Set(imported.map((row) => row.id));
+  for (let index = testProducts.length - 1; index >= 0; index -= 1) if (productIds.has(testProducts[index].id)) testProducts.splice(index, 1);
+  for (let index = testInventoryTransactions.length - 1; index >= 0; index -= 1) if (productIds.has(testInventoryTransactions[index].productId)) testInventoryTransactions.splice(index, 1);
+});
+
+test('Product Excel preview reports row errors, duplicate values, formulas and wrong file types', async () => {
+  const cookie = await catalogLogin();
+  const previewResponse = await fetch(`${base}/products/import/preview`, { method: 'POST', headers: { cookie }, body: await productImportForm([
+    ['drink-1', '0001234567890', 'Duplicate database row', 'drinks', 'each', -1, 2, -2, 'BAD', -3, ''],
+    ['DUP-ROW', 'DUP-BC', 'Duplicate one', 'drinks', 'each', 1, 2, 0, 'ACTIVE', 0, ''],
+    [' dup-row ', 'DUP-BC', 'Duplicate two', 'foreign', 'each', 1, 2, 0, 'ACTIVE', 0, ''],
+    [{ formula: '1+1' }, '12345', 'Formula row', 'drinks', 'each', 1, 2, 0, 'ACTIVE', 0, ''],
+  ]) });
+  assert.equal(previewResponse.status, 201);
+  const preview = await previewResponse.json();
+  assert.equal(preview.validRows, 0);
+  assert.equal(preview.errorRows, 4);
+  assert.equal(preview.errors.some((error) => error.column === 'SKU' && error.message.includes('duplicated')), true);
+  assert.equal(preview.errors.some((error) => error.column === 'Barcode' && error.message.includes('duplicated')), true);
+  assert.equal(preview.errors.some((error) => error.column === 'Category slug' && error.message.includes('current Store')), true);
+  assert.equal(preview.errors.some((error) => error.column === 'SKU' && error.message.includes('unsupported')), true);
+  assert.equal(preview.errors.some((error) => error.column === 'Cost price'), true);
+  assert.equal(preview.errors.some((error) => error.column === 'Minimum stock'), true);
+  assert.equal(preview.errors.some((error) => error.column === 'Status'), true);
+  assert.equal(preview.errors.some((error) => error.column === 'Opening stock'), true);
+  const productCountBeforeRejectedImport = testProducts.length;
+  const rejectedImport = await fetch(`${base}/products/import`, { method: 'POST', headers: { cookie }, body: await productImportForm([
+    ['drink-1', '0001234567890', 'Duplicate database row', 'drinks', 'each', -1, 2, -2, 'BAD', -3, ''],
+    ['DUP-ROW', 'DUP-BC', 'Duplicate one', 'drinks', 'each', 1, 2, 0, 'ACTIVE', 0, ''],
+    [' dup-row ', 'DUP-BC', 'Duplicate two', 'foreign', 'each', 1, 2, 0, 'ACTIVE', 0, ''],
+    [{ formula: '1+1' }, '12345', 'Formula row', 'drinks', 'each', 1, 2, 0, 'ACTIVE', 0, ''],
+  ]) });
+  assert.equal(rejectedImport.status, 400);
+  assert.equal(testProducts.length, productCountBeforeRejectedImport);
+
+  const numericBarcode = await fetch(`${base}/products/import/preview`, { method: 'POST', headers: { cookie }, body: await productImportForm([
+    ['NUMERIC-BC', 123456, 'Numeric barcode', 'drinks', 'each', 1, 2, 0, 'ACTIVE', '', ''],
+  ]) });
+  const numericPreview = await numericBarcode.json();
+  assert.equal(numericPreview.errors.some((error) => error.column === 'Barcode' && error.message.includes('text')), true);
+
+  const invalidExtension = await fetch(`${base}/products/import/preview`, { method: 'POST', headers: { cookie }, body: await productImportForm([], 'products.csv') });
+  assert.equal(invalidExtension.status, 400);
+  const missingHeader = await fetch(`${base}/products/import/preview`, { method: 'POST', headers: { cookie }, body: await productImportForm([['ROW']], 'missing-header.xlsx', ['SKU']) });
+  assert.equal(missingHeader.status, 201);
+  assert.equal((await missingHeader.json()).errors.some((error) => error.message.includes('header is missing')), true);
+});
+
+test('Product Excel import enforces limits and rolls back product writes if opening history fails', async () => {
+  const cookie = await catalogLogin();
+  const largeFile = await productImportForm([], 'large.xlsx', undefined, Buffer.alloc(5 * 1024 * 1024 + 1, 0x50));
+  const sizeResponse = await fetch(`${base}/products/import/preview`, { method: 'POST', headers: { cookie }, body: largeFile });
+  assert.equal(sizeResponse.status, 413);
+
+  const tooManyRows = Array.from({ length: 501 }, (_, index) => [`LIMIT-${index}`, '', `Row ${index}`, 'drinks', 'each', 1, 2, 0, 'ACTIVE', '', '']);
+  const rowLimitResponse = await fetch(`${base}/products/import/preview`, { method: 'POST', headers: { cookie }, body: await productImportForm(tooManyRows) });
+  assert.equal(rowLimitResponse.status, 400);
+
+  globalThis.__failInventoryTransactionCreateMany = true;
+  const failedImport = await fetch(`${base}/products/import`, { method: 'POST', headers: { cookie }, body: await productImportForm([
+    ['ROLLBACK-IMPORT', '', 'Must roll back', 'drinks', 'each', 1, 2, 0, 'ACTIVE', 3, ''],
+  ]) });
+  globalThis.__failInventoryTransactionCreateMany = false;
+  assert.equal(failedImport.status, 500);
+  assert.equal(testProducts.some((row) => row.sku === 'ROLLBACK-IMPORT'), false);
+
+  globalThis.__forceImportUniqueConflict = true;
+  const concurrentDuplicate = await fetch(`${base}/products/import`, { method: 'POST', headers: { cookie }, body: await productImportForm([
+    ['CONCURRENT-IMPORT', '', 'Concurrent duplicate', 'drinks', 'each', 1, 2, 0, 'ACTIVE', 0, ''],
+  ]) });
+  globalThis.__forceImportUniqueConflict = false;
+  assert.equal(concurrentDuplicate.status, 409);
+  assert.equal(testProducts.some((row) => row.sku === 'CONCURRENT-IMPORT'), false);
+});
+
+const productImportHeaders = ['SKU', 'Barcode', 'Product name', 'Category slug', 'Unit', 'Cost price', 'Selling price', 'Minimum stock', 'Status', 'Opening stock', 'Description'];
+async function productImportForm(rows, filename = 'products.xlsx', selectedHeaders = productImportHeaders, customBuffer) {
+  let buffer = customBuffer;
+  if (!buffer) {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Products');
+    sheet.addRow(selectedHeaders);
+    for (const row of rows) sheet.addRow(row);
+    buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+  }
+  const form = new FormData();
+  form.set('file', new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), filename);
+  return form;
+}
 
 test('Catalog permissions allow Staff read only and reject missing permission', async () => {
   const staffCookie = await catalogLogin('staff@example.test');

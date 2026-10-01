@@ -124,19 +124,37 @@ async function main() {
   assert.equal(lookup.items.some((item) => item.id === inactiveProduct.id), false);
   assert.equal(lookup.items.some((item) => item.id === foreignProduct.id), false);
   assert.equal((await request(`/products/pos?storeId=${foreignStore.id}`, { cookie: ownerCookie })).status, 400);
-  assert.equal((await request('/orders', { method: 'POST', cookie: ownerCookie, body: { storeId: foreignStore.id, items: [{ productId: product.id, quantity: 1 }], paymentMethod: 'CASH' } })).status, 400);
-  assert.equal((await request('/orders', { method: 'POST', cookie: ownerCookie, body: { items: [{ productId: product.id, quantity: 0 }], paymentMethod: 'CASH' } })).status, 400);
+  assert.equal((await request('/orders', { method: 'POST', cookie: ownerCookie, body: { storeId: foreignStore.id, items: [{ productId: product.id, quantity: 1 }], paymentMethod: 'CASH', amountReceived: '100' } })).status, 400);
+  assert.equal((await request('/orders', { method: 'POST', cookie: ownerCookie, body: { items: [{ productId: product.id, quantity: 0 }], paymentMethod: 'CASH', amountReceived: '100' } })).status, 400);
   assert.equal((await request('/orders', { method: 'POST', cookie: ownerCookie, body: { items: [{ productId: product.id, quantity: 1 }], paymentMethod: 'BITCOIN' } })).status, 400);
-  assert.equal((await request('/orders', { method: 'POST', cookie: ownerCookie, body: { items: [{ productId: product.id, quantity: 1 }], paymentMethod: 'CASH', discount: '999' } })).status, 400);
-  assert.equal((await request('/orders', { method: 'POST', cookie: ownerCookie, body: { customerId: foreignCustomer.id, items: [{ productId: product.id, quantity: 1 }], paymentMethod: 'CASH' } })).status, 404);
-  assert.equal((await request('/orders', { method: 'POST', cookie: ownerCookie, body: { items: [{ productId: foreignProduct.id, quantity: 1 }], paymentMethod: 'CASH' } })).status, 404);
-  assert.equal((await request('/orders', { method: 'POST', cookie: ownerCookie, body: { items: [{ productId: inactiveProduct.id, quantity: 1 }], paymentMethod: 'CASH' } })).status, 409);
+  const noTenderCash = await expectStatus(await request('/orders', { method: 'POST', cookie: ownerCookie,
+    body: { items: [{ productId: product.id, quantity: 1 }], paymentMethod: 'CASH' } }), 201, 'Cash checkout without tender');
+  assert.equal(noTenderCash.amountReceived, null); assert.equal(noTenderCash.changeAmount, null);
+  await expectStatus(await request(`/orders/${noTenderCash.id}/refund`, { method: 'POST', cookie: ownerCookie, body: { reason: 'No tender amount smoke check' } }), 201, 'Restore stock after cash checkout without tender');
+  const nullTenderCash = await expectStatus(await request('/orders', { method: 'POST', cookie: ownerCookie,
+    body: { items: [{ productId: product.id, quantity: 1 }], paymentMethod: 'CASH', amountReceived: null } }), 201, 'Cash checkout with null tender');
+  assert.equal(nullTenderCash.amountReceived, null); assert.equal(nullTenderCash.changeAmount, null);
+  await expectStatus(await request(`/orders/${nullTenderCash.id}/refund`, { method: 'POST', cookie: ownerCookie, body: { reason: 'Null tender smoke check' } }), 201, 'Restore stock after null tender');
+  const emptyTenderCash = await expectStatus(await request('/orders', { method: 'POST', cookie: ownerCookie,
+    body: { items: [{ productId: product.id, quantity: 1 }], paymentMethod: 'CASH', amountReceived: '  ' } }), 201, 'Cash checkout with blank tender');
+  assert.equal(emptyTenderCash.amountReceived, null); assert.equal(emptyTenderCash.changeAmount, null);
+  await expectStatus(await request(`/orders/${emptyTenderCash.id}/refund`, { method: 'POST', cookie: ownerCookie, body: { reason: 'Blank tender smoke check' } }), 201, 'Restore stock after blank tender');
+  assert.equal((await request('/orders', { method: 'POST', cookie: ownerCookie, body: { items: [{ productId: product.id, quantity: 1 }], paymentMethod: 'CASH', amountReceived: '12.49' } })).status, 400, 'Cash checkout rejects insufficient tender');
+  assert.equal((await request('/orders', { method: 'POST', cookie: ownerCookie, body: { items: [{ productId: product.id, quantity: 1 }], paymentMethod: 'CASH', amountReceived: '-1' } })).status, 400, 'Cash checkout rejects a negative tender');
+  assert.equal((await request('/orders', { method: 'POST', cookie: ownerCookie, body: { items: [{ productId: product.id, quantity: 1 }], paymentMethod: 'CASH', amountReceived: '1e3' } })).status, 400, 'Cash checkout rejects non-decimal notation');
+  assert.equal((await request('/orders', { method: 'POST', cookie: ownerCookie, body: { items: [{ productId: product.id, quantity: 1 }], paymentMethod: 'CARD' } })).status, 400, 'Non-cash checkout requires manual confirmation');
+  assert.equal((await request('/orders', { method: 'POST', cookie: ownerCookie, body: { items: [{ productId: product.id, quantity: 1 }], paymentMethod: 'CASH', discount: '999', amountReceived: '1000' } })).status, 400);
+  assert.equal((await request('/orders', { method: 'POST', cookie: ownerCookie, body: { customerId: foreignCustomer.id, items: [{ productId: product.id, quantity: 1 }], paymentMethod: 'CASH', amountReceived: '100' } })).status, 404);
+  assert.equal((await request('/orders', { method: 'POST', cookie: ownerCookie, body: { items: [{ productId: foreignProduct.id, quantity: 1 }], paymentMethod: 'CASH', amountReceived: '100' } })).status, 404);
+  assert.equal((await request('/orders', { method: 'POST', cookie: ownerCookie, body: { items: [{ productId: inactiveProduct.id, quantity: 1 }], paymentMethod: 'CASH', amountReceived: '100' } })).status, 409);
 
   const sale = await expectStatus(await request('/orders', { method: 'POST', cookie: ownerCookie, body: {
-    customerId: customer.id, items: [{ productId: product.id, quantity: 1 }, { productId: product.id, quantity: 2 }], discount: '5.00', paymentMethod: 'CARD',
+    customerId: customer.id, items: [{ productId: product.id, quantity: 1 }, { productId: product.id, quantity: 2 }], discount: '5.00', paymentMethod: 'CARD', manualPaymentConfirmed: true,
   } }), 201, 'Complete POS checkout');
   assert.equal(sale.orderStatus, 'COMPLETED'); assert.equal(sale.paymentStatus, 'PAID');
   assert.equal(sale.subtotal, '37.5'); assert.equal(sale.discount, '5'); assert.equal(sale.total, '32.5');
+  assert.equal(sale.discountType, 'FIXED'); assert.equal(sale.discountValue, '5');
+  assert.equal(sale.amountReceived, null); assert.equal(sale.changeAmount, null);
   assert.equal(sale.items.length, 1); assert.equal(sale.items[0].quantity, 3);
   const persistedOrder = await prisma.order.findUnique({ where: { id: sale.id }, include: { items: true } });
   const persistedProduct = await prisma.product.findUnique({ where: { id: product.id } });
@@ -154,7 +172,16 @@ async function main() {
   assert.equal(orderList.items.some((item) => item.id === foreignOrder.id), false);
   const orderDetail = await expectStatus(await request(`/orders/${sale.id}`, { cookie: ownerCookie }), 200, 'Order detail');
   assert.equal(orderDetail.items[0].productNameSnapshot, 'Temporary Smoke Product');
-  assert.equal('passwordHash' in orderDetail.staff, false);
+  assert.equal(orderDetail.store.name, primaryStore.name); assert.equal(orderDetail.store.timezone, primaryStore.timezone);
+  assert.equal(orderDetail.store.currency, primaryStore.currency); assert.equal(orderDetail.store.locale, primaryStore.locale);
+  assert.equal(orderDetail.store.address, primaryStore.address); assert.equal(orderDetail.store.phone, primaryStore.phone);
+  assert.equal('passwordHash' in orderDetail.staff, false); assert.equal('email' in orderDetail.staff, false);
+  const stockBeforeReceiptRead = (await prisma.product.findUnique({ where: { id: product.id } })).stockQuantity;
+  const transactionsBeforeReceiptRead = await prisma.inventoryTransaction.count({ where: { referenceId: sale.id } });
+  const repeatedReceiptRead = await expectStatus(await request(`/orders/${sale.id}`, { cookie: ownerCookie }), 200, 'Reprint order detail');
+  assert.equal(repeatedReceiptRead.id, sale.id); assert.equal(repeatedReceiptRead.createdAt, orderDetail.createdAt);
+  assert.equal((await prisma.product.findUnique({ where: { id: product.id } })).stockQuantity, stockBeforeReceiptRead, 'Receipt re-read must not change stock');
+  assert.equal(await prisma.inventoryTransaction.count({ where: { referenceId: sale.id } }), transactionsBeforeReceiptRead, 'Receipt re-read must not add inventory history');
   assert.equal((await request('/orders', { cookie: staffCookie })).status, 200, 'Staff with orders:read can read orders');
   assert.equal((await request('/orders/00000000-0000-4000-8000-000000000001/refund', { method: 'POST', cookie: staffCookie, body: { reason: 'No access' } })).status, 403);
 
@@ -170,8 +197,29 @@ async function main() {
   const afterRefundHistory = await expectStatus(await request(`/customers/${customer.id}/history`, { cookie: ownerCookie }), 200, 'Customer history after refund');
   assert.equal(afterRefundHistory.summary.totalOrders, 0);
 
+  const cashSale = await expectStatus(await request('/orders', { method: 'POST', cookie: ownerCookie, body: {
+    items: [{ productId: product.id, quantity: 3 }], discountType: 'PERCENTAGE', discountValue: '10',
+    paymentMethod: 'CASH', amountReceived: '40',
+  } }), 201, 'Cash checkout with percentage discount');
+  assert.equal(cashSale.discountType, 'PERCENTAGE'); assert.equal(cashSale.discountValue, '10');
+  assert.equal(cashSale.subtotal, '37.5'); assert.equal(cashSale.discount, '4'); assert.equal(cashSale.total, '33.5');
+  assert.equal(cashSale.amountReceived, '40'); assert.equal(cashSale.changeAmount, '6.5');
+  const cashStockBeforeReprint = (await prisma.product.findUnique({ where: { id: product.id } })).stockQuantity;
+  const cashOrderCountBeforeReprint = await prisma.order.count({ where: { storeId: primaryStore.id } });
+  const cashTransactionsBeforeReprint = await prisma.inventoryTransaction.count({ where: { referenceId: cashSale.id } });
+  const cashReceipt = await expectStatus(await request(`/orders/${cashSale.id}`, { cookie: ownerCookie }), 200, 'Cash receipt details');
+  assert.equal(cashReceipt.amountReceived, '40'); assert.equal(cashReceipt.changeAmount, '6.5');
+  assert.equal(cashReceipt.store.name, primaryStore.name); assert.equal(cashReceipt.items[0].productNameSnapshot, 'Temporary Smoke Product');
+  assert.equal((await request(`/orders/${cashSale.id}`, { cookie: staffCookie })).status, 200, 'Staff with orders:read can reprint receipt');
+  const reprintedCashReceipt = await expectStatus(await request(`/orders/${cashSale.id}`, { cookie: ownerCookie }), 200, 'Repeat cash receipt read');
+  assert.equal(reprintedCashReceipt.id, cashSale.id); assert.equal(reprintedCashReceipt.paymentStatus, 'PAID');
+  assert.equal((await prisma.order.count({ where: { storeId: primaryStore.id } })), cashOrderCountBeforeReprint, 'Reprint must not create another Order');
+  assert.equal((await prisma.product.findUnique({ where: { id: product.id } })).stockQuantity, cashStockBeforeReprint, 'Reprint must not change stock');
+  assert.equal(await prisma.inventoryTransaction.count({ where: { referenceId: cashSale.id } }), cashTransactionsBeforeReprint, 'Reprint must not create inventory history');
+  await expectStatus(await request(`/orders/${cashSale.id}/refund`, { method: 'POST', cookie: ownerCookie, body: { reason: 'Cash receipt verification' } }), 201, 'Restore stock after cash receipt smoke check');
+
   const rollbackSale = await expectStatus(await request('/orders', { method: 'POST', cookie: ownerCookie,
-    body: { items: [{ productId: product.id, quantity: 1 }], paymentMethod: 'CASH' } }), 201, 'Create refund rollback fixture');
+    body: { items: [{ productId: product.id, quantity: 1 }], paymentMethod: 'CASH', amountReceived: '20' } }), 201, 'Create refund rollback fixture');
   const stockBeforeRefundFailure = (await prisma.product.findUnique({ where: { id: product.id } })).stockQuantity;
   triggerName = `p67_return_fail_${token.replace(/[^a-z0-9]/gi, '')}`;
   functionName = `p67_return_fn_${token.replace(/[^a-z0-9]/gi, '')}`;
@@ -223,7 +271,7 @@ async function main() {
   triggerName = `p67_fail_${suffix}`; functionName = `p67_fn_${suffix}`;
   await prisma.$executeRawUnsafe(`CREATE FUNCTION "${functionName}"() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW."productId" = '${product.id}'::uuid AND NEW."type" = 'SALE'::"InventoryTransactionType" THEN RAISE EXCEPTION 'temporary smoke failure'; END IF; RETURN NEW; END; $$`);
   await prisma.$executeRawUnsafe(`CREATE TRIGGER "${triggerName}" BEFORE INSERT ON "InventoryTransaction" FOR EACH ROW EXECUTE FUNCTION "${functionName}"()`);
-  const failed = await request('/orders', { method: 'POST', cookie: ownerCookie, body: { items: [{ productId: product.id, quantity: 1 }], paymentMethod: 'CASH' } });
+  const failed = await request('/orders', { method: 'POST', cookie: ownerCookie, body: { items: [{ productId: product.id, quantity: 1 }], paymentMethod: 'CASH', amountReceived: '20' } });
   assert.equal(failed.status, 500, 'Forced SALE write error should abort checkout');
   assert.equal((await prisma.order.count({ where: { storeId: primaryStore.id } })), beforeFailure, 'Failed checkout order must roll back');
   assert.equal((await prisma.product.findUnique({ where: { id: product.id } })).stockQuantity, stockBeforeFailure, 'Failed checkout stock must roll back');
@@ -233,19 +281,21 @@ async function main() {
   triggerName = undefined; functionName = undefined;
 
   await prisma.product.update({ where: { id: product.id }, data: { stockQuantity: 4 } });
+  const itemsBeforeConcurrent = await prisma.orderItem.count({ where: { order: { storeId: primaryStore.id }, productId: product.id } });
   const concurrentBodies = [0, 1].map(() => request('/orders', { method: 'POST', cookie: ownerCookie,
-    body: { items: [{ productId: product.id, quantity: 3 }], paymentMethod: 'CASH' } }));
+    body: { items: [{ productId: product.id, quantity: 3 }], paymentMethod: 'CASH', amountReceived: '40' } }));
   const concurrent = await Promise.all(concurrentBodies);
   assert.deepEqual(concurrent.map((response) => response.status).sort(), [201, 409]);
   assert.equal((await prisma.product.findUnique({ where: { id: product.id } })).stockQuantity, 1, 'Concurrent checkout must not oversell');
-  assert.equal((await prisma.orderItem.count({ where: { order: { storeId: primaryStore.id }, productId: product.id } })), 3);
+  assert.equal((await prisma.orderItem.count({ where: { order: { storeId: primaryStore.id }, productId: product.id } })), itemsBeforeConcurrent + 1);
 
   const staffOrder = await expectStatus(await request('/orders', { method: 'POST', cookie: staffCookie,
-    body: { items: [{ productId: product.id, quantity: 1 }], paymentMethod: 'CASH' } }), 201, 'Staff order permission');
+    body: { items: [{ productId: product.id, quantity: 1 }], paymentMethod: 'CASH', amountReceived: '20' } }), 201, 'Staff order permission');
   assert.equal(staffOrder.staffId, undefined, 'Checkout response must not expose staff internals');
+  assert.equal('passwordHash' in staffOrder.staff, false); assert.equal('email' in staffOrder.staff, false);
   const inactive = await expectStatus(await request(`/customers/${customer.id}`, { method: 'DELETE', cookie: ownerCookie }), 200, 'Delete Customer with history');
   assert.equal(inactive.deactivated, true); assert.equal(inactive.status, 'INACTIVE');
-  assert.equal((await request('/orders', { method: 'POST', cookie: ownerCookie, body: { customerId: customer.id, items: [{ productId: product.id, quantity: 1 }], paymentMethod: 'CASH' } })).status, 400);
+  assert.equal((await request('/orders', { method: 'POST', cookie: ownerCookie, body: { customerId: customer.id, items: [{ productId: product.id, quantity: 1 }], paymentMethod: 'CASH', amountReceived: '20' } })).status, 400);
   const noHistory = await expectStatus(await request('/customers', { method: 'POST', cookie: ownerCookie, body: { name: 'Temporary Delete Check' } }), 201, 'Create removable Customer');
   customerIds.push(noHistory.id);
   assert.equal((await expectStatus(await request(`/customers/${noHistory.id}`, { method: 'DELETE', cookie: ownerCookie }), 200, 'Hard delete unused Customer')).deleted, true);
@@ -275,7 +325,7 @@ async function cleanup() {
 try {
   await main();
 } catch (error) {
-  process.stderr.write(`PostgreSQL HTTP smoke FAILED: ${error.message}\n`);
+  process.stderr.write(`PostgreSQL HTTP smoke FAILED: ${error.stack || error.message}\n`);
   process.exitCode = 1;
 } finally {
   await cleanup().catch((error) => { process.stderr.write(`Temporary test data cleanup failed (code ${error.code || 'unknown'}).\n`); process.exitCode = 1; });
