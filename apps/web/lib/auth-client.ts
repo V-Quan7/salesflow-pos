@@ -10,6 +10,17 @@ export interface CurrentUser {
   store: { id: string; code: string; name: string };
 }
 
+export interface SetupStatus { setupRequired: boolean; }
+export interface InitialSetupInput {
+  setupToken: string;
+  store: { name: string; code: string; currency: string; timezone: string; locale: string };
+  owner: { name: string; email: string; password: string };
+}
+export interface InitialSetupResult {
+  store: { name: string; code: string };
+  owner: { name: string; email: string };
+}
+
 export type UserStatus = 'ACTIVE' | 'INACTIVE';
 export interface PermissionRecord { id: string; code: string; description: string | null; }
 export interface RoleRecord {
@@ -178,6 +189,10 @@ export function login(input: { storeCode: string; email: string; password: strin
 }
 export function currentUser() { return request<CurrentUser>('/auth/me'); }
 export function logout() { return request<{ success: true }>('/auth/logout', { method: 'POST' }); }
+export function getSetupStatus() { return request<SetupStatus>('/setup/status'); }
+export function setupProduction(input: InitialSetupInput) {
+  return request<InitialSetupResult>('/setup', { method: 'POST', body: JSON.stringify(input) });
+}
 
 export function getUsers(query: UsersQuery = {}) {
   return request<PaginatedUsers>(`/users${queryString(query)}`);

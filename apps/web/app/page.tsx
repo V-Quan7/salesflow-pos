@@ -4,7 +4,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 
-import { currentUser, login, logout, publicStoreConfig } from '../lib/auth-client';
+import { currentUser, getSetupStatus, login, logout, publicStoreConfig } from '../lib/auth-client';
 import type { CurrentUser, PublicStoreConfig } from '../lib/auth-client';
 import { Icon } from '../components/ui/Icon';
 
@@ -24,11 +24,33 @@ export default function Home() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [systemError, setSystemError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [config, setConfig] = useState<PublicStoreConfig>(fallback);
 
   useEffect(() => {
-    currentUser().then((current) => { setUser(current); setStoreCode(current.store.code); }).catch(() => setUser(null)).finally(() => setLoading(false));
+    let cancelled = false;
+    async function initialize() {
+      try {
+        const setup = await getSetupStatus();
+        if (setup.setupRequired) { window.location.replace('/setup'); return; }
+        const prefilledStoreCode = new URLSearchParams(window.location.search).get('storeCode');
+        if (prefilledStoreCode) setStoreCode(prefilledStoreCode);
+        try {
+          const current = await currentUser();
+          if (!cancelled) { setUser(current); setStoreCode(current.store.code); }
+        } catch (error) {
+          const status = typeof error === 'object' && error !== null && 'status' in error ? error.status : undefined;
+          if (!cancelled && status !== 401) setSystemError('Không thể kết nối API để kiểm tra hệ thống. Vui lòng thử lại sau.');
+        }
+      } catch {
+        if (!cancelled) setSystemError('Không thể kiểm tra trạng thái hệ thống. Hãy kiểm tra API và cơ sở dữ liệu rồi thử lại.');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    void initialize();
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -66,6 +88,7 @@ export default function Home() {
   const primary = config.store.primaryColor || '#334155';
 
   if (loading) return <main className="center-screen"><p>Đang kiểm tra phiên đăng nhập…</p></main>;
+  if (systemError) return <main className="center-screen"><section className="panel"><h1>Chưa thể kết nối</h1><p className="muted">{systemError}</p><button type="button" onClick={() => window.location.reload()}>Thử lại</button></section></main>;
   if (user) {
     const canManageStore = user.permissions.includes('store:read');
     return <main className="center-screen"><section className="panel home-panel">

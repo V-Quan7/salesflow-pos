@@ -12,9 +12,10 @@ import { InventoryModule } from './inventory/inventory.module';
 import { CustomersModule } from './customers/customers.module';
 import { OrdersModule } from './orders/orders.module';
 import { ReportsModule } from './reports/reports.module';
+import { SetupModule } from './setup/setup.module';
 
 @Module({
   controllers: [HealthController],
-  imports: [PrismaModule, AuthModule, UsersModule, AccessModule, StoreModule, CategoriesModule, ProductsModule, InventoryModule, CustomersModule, OrdersModule, ReportsModule],
+  imports: [PrismaModule, AuthModule, UsersModule, AccessModule, StoreModule, CategoriesModule, ProductsModule, InventoryModule, CustomersModule, OrdersModule, ReportsModule, SetupModule],
 })
 export class AppModule {}

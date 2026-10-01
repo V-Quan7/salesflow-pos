@@ -4,7 +4,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
-import { currentUser, logout, publicStoreConfig } from '../../lib/auth-client';
+import { currentUser, getSetupStatus, logout, publicStoreConfig } from '../../lib/auth-client';
 import type { CurrentUser, PublicStoreConfig } from '../../lib/auth-client';
 import { Icon, type IconName } from '../ui/Icon';
 
@@ -43,16 +43,35 @@ export function AdminShell({ children, compact = false }: { children: ReactNode;
   const [brand, setBrand] = useState<PublicStoreConfig | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(compact);
+  const [checkingAccess, setCheckingAccess] = useState(true);
+  const [setupCheckError, setSetupCheckError] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    currentUser().then(async (current) => {
-      if (cancelled) return;
-      setUser(current);
-      try { const config = await publicStoreConfig(current.store.code); if (!cancelled) setBrand(config); } catch { /* keep neutral identity fallback */ }
-    }).catch(() => { if (!cancelled) setUser(null); });
+    async function checkAccess() {
+      try {
+        const current = await currentUser();
+        if (cancelled) return;
+        setUser(current);
+        try { const config = await publicStoreConfig(current.store.code); if (!cancelled) setBrand(config); } catch { /* keep neutral identity fallback */ }
+        if (!cancelled) setCheckingAccess(false);
+      } catch (authError) {
+        try {
+          const setup = await getSetupStatus();
+          if (cancelled) return;
+          if (setup.setupRequired) { router.replace('/setup'); return; }
+          const status = typeof authError === 'object' && authError !== null && 'status' in authError ? authError.status : undefined;
+          if (status === 401) { router.replace('/'); return; }
+          setSetupCheckError(true);
+          setCheckingAccess(false);
+        } catch {
+          if (!cancelled) { setSetupCheckError(true); setCheckingAccess(false); }
+        }
+      }
+    }
+    void checkAccess();
     return () => { cancelled = true; };
-  }, []);
+  }, [router]);
 
   useEffect(() => { setMobileOpen(false); }, [pathname]);
   useEffect(() => {
@@ -71,6 +90,9 @@ export function AdminShell({ children, compact = false }: { children: ReactNode;
   const storeTitle = brand?.store.shortName || user?.store.name || 'SalesFlow';
   const configuredColor = brand?.store.primaryColor;
   const primaryColor = configuredColor && /^#(?:[\da-f]{3}|[\da-f]{6})$/i.test(configuredColor) ? configuredColor : undefined;
+
+  if (checkingAccess) return <main className="center-screen"><p>Đang kiểm tra quyền truy cập…</p></main>;
+  if (setupCheckError) return <main className="center-screen"><section className="panel"><h1>Không thể kiểm tra hệ thống</h1><p className="muted">API hoặc cơ sở dữ liệu hiện chưa phản hồi. Vui lòng thử lại.</p><button type="button" onClick={() => window.location.reload()}>Thử lại</button></section></main>;
 
   return <div className={`admin-frame${collapsed ? ' sidebar-collapsed' : ''}`} style={primaryColor ? ({ '--primary': primaryColor } as CSSProperties) : undefined}>
     {mobileOpen && <button className="mobile-scrim" aria-label="Đóng điều hướng" onClick={() => setMobileOpen(false)} />}

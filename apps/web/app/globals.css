@@ -520,6 +520,10 @@ button.icon-button.danger-icon-button:hover:not(:disabled) { color: var(--danger
 .report-inline-error { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 12px; color: var(--danger); font-size: .77rem; }
 .report-inline-error button { min-height: 32px; padding: 5px 9px; font-size: .72rem; }
 .home-panel { width: min(100%, 520px); }
+.setup-panel { width: min(100%, 780px); }
+.setup-panel > .muted { margin: 0 0 22px; }
+.setup-panel .form-grid > h2 { margin: 8px 0 0; }
+.setup-panel .form-hint { color: var(--text-muted); font-size: .75rem; font-weight: 400; }
 .welcome-mark { display: grid; width: 46px; height: 46px; place-items: center; margin: 0 auto 16px; color: var(--primary); background: var(--primary-soft); border-radius: 14px; }
 .eyebrow { margin: 0 0 6px; color: var(--primary); font-size: .76rem; font-weight: 700; letter-spacing: .06em; text-align: center; text-transform: uppercase; }
 .home-panel > h1, .home-panel > p { text-align: center; }

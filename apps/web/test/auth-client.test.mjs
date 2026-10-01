@@ -33,6 +33,27 @@ test('current user and logout call their endpoints', async () => {
   assert.equal(calls[1][1].method, 'POST');
 });
 
+test('first-run setup status and submission use public API endpoints with cookie credentials', async () => {
+  response = { ok: true, status: 200, json: async () => ({ setupRequired: true }) };
+  assert.deepEqual(JSON.parse(JSON.stringify(await authClient.exports.getSetupStatus())), { setupRequired: true });
+  assert.equal(new globalThis.URL(calls[0][0]).pathname, '/api/setup/status');
+  assert.equal(calls[0][1].credentials, 'include');
+
+  const input = {
+    setupToken: 'operator-supplied-token-that-is-not-a-client-config',
+    store: { name: 'Shop', code: 'shop', currency: 'VND', timezone: 'Asia/Ho_Chi_Minh', locale: 'vi-VN' },
+    owner: { name: 'Owner', email: 'owner@example.test', password: 'owner-password-with-12-chars' },
+  };
+  response = { ok: true, status: 201, json: async () => ({ store: { name: 'Shop', code: 'shop' }, owner: { name: 'Owner', email: 'owner@example.test' } }) };
+  const result = await authClient.exports.setupProduction(input);
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), { store: { name: 'Shop', code: 'shop' }, owner: { name: 'Owner', email: 'owner@example.test' } });
+  assert.equal(new globalThis.URL(calls[1][0]).pathname, '/api/setup');
+  assert.equal(calls[1][1].method, 'POST');
+  assert.equal(calls[1][1].credentials, 'include');
+  assert.equal(calls[1][1].body, JSON.stringify(input));
+  assert.equal('storeId' in JSON.parse(calls[1][1].body), false);
+});
+
 test('public login configuration resolves by Store code without credentials', async () => {
   await authClient.exports.publicStoreConfig('dev-store');
   assert.match(calls[0][0], /\/store\/public-config\/dev-store$/);
